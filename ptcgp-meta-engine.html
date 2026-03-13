@@ -1,0 +1,2521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PTCGP Meta Engine — Fantastical Parade B2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Barlow:ital,wght@0,300;0,400;0,500;0,600;1,300&display=swap" rel="stylesheet">
+
+<style>
+/* ══════════════════════════════════════════
+   CSS VARIABLES — DARK SPACE PALETTE
+══════════════════════════════════════════ */
+:root {
+  --bg-void:       #080b12;
+  --bg-deep:       #0d1220;
+  --bg-surface:    #111827;
+  --bg-elevated:   #1a2235;
+  --border-subtle: rgba(79,209,255,0.12);
+  --border-mid:    rgba(79,209,255,0.25);
+  --border-bright: rgba(79,209,255,0.55);
+
+  --cyan:          #4fd1ff;
+  --cyan-dim:      rgba(79,209,255,0.6);
+  --cyan-glow:     rgba(79,209,255,0.2);
+  --cyan-deep:     rgba(79,209,255,0.08);
+  --purple:        #a78bfa;
+  --purple-glow:   rgba(167,139,250,0.2);
+  --gold:          #fbbf24;
+  --gold-glow:     rgba(251,191,36,0.2);
+  --red:           #f87171;
+  --green:         #4ade80;
+
+  --text-primary:  #e8f0ff;
+  --text-secondary:#8ba0c4;
+  --text-muted:    #4a5a78;
+
+  --font-display: 'Orbitron', sans-serif;
+  --font-body:    'Barlow', sans-serif;
+
+  --tier-s-color: #fbbf24;
+  --tier-s-glow:  rgba(251,191,36,0.35);
+  --tier-a-color: #a78bfa;
+  --tier-a-glow:  rgba(167,139,250,0.3);
+  --tier-b-color: #4fd1ff;
+  --tier-b-glow:  rgba(79,209,255,0.25);
+  --tier-c-color: #8ba0c4;
+  --tier-c-glow:  rgba(139,160,196,0.15);
+
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --transition: 0.22s cubic-bezier(0.4,0,0.2,1);
+}
+
+/* ══════════════════════════════════════════
+   RESET & BASE
+══════════════════════════════════════════ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg-void);
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow-x: hidden;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+/* Ambient star field */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(1px 1px at 10% 20%, rgba(255,255,255,0.35) 0%, transparent 100%),
+    radial-gradient(1px 1px at 30% 60%, rgba(255,255,255,0.25) 0%, transparent 100%),
+    radial-gradient(1px 1px at 50% 10%, rgba(255,255,255,0.3) 0%, transparent 100%),
+    radial-gradient(1px 1px at 70% 80%, rgba(255,255,255,0.2) 0%, transparent 100%),
+    radial-gradient(1px 1px at 90% 40%, rgba(255,255,255,0.35) 0%, transparent 100%),
+    radial-gradient(1px 1px at 15% 85%, rgba(255,255,255,0.2) 0%, transparent 100%),
+    radial-gradient(1px 1px at 85% 15%, rgba(255,255,255,0.3) 0%, transparent 100%),
+    radial-gradient(1px 1px at 45% 45%, rgba(255,255,255,0.15) 0%, transparent 100%),
+    radial-gradient(2px 2px at 60% 25%, rgba(79,209,255,0.2) 0%, transparent 100%),
+    radial-gradient(2px 2px at 25% 70%, rgba(167,139,250,0.15) 0%, transparent 100%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Nebula gradient */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 60% 40% at 80% 10%, rgba(79,209,255,0.05) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 35% at 10% 90%, rgba(167,139,250,0.05) 0%, transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ══════════════════════════════════════════
+   NAV
+══════════════════════════════════════════ */
+#app-nav {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  backdrop-filter: blur(18px) saturate(180%);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  background: rgba(8,11,18,0.8);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  height: 64px;
+}
+
+.nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  flex-shrink: 0;
+}
+
+.nav-brand-icon {
+  width: 36px;
+  height: 36px;
+  background: linear-gradient(135deg, var(--cyan), var(--purple));
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  box-shadow: 0 0 16px rgba(79,209,255,0.4);
+}
+
+.nav-brand-text {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+}
+
+.nav-brand-sub {
+  font-family: var(--font-body);
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--cyan-dim);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.nav-tabs {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+
+.nav-tab {
+  padding: 7px 18px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: all var(--transition);
+  text-transform: uppercase;
+}
+
+.nav-tab:hover {
+  color: var(--cyan);
+  border-color: var(--border-mid);
+  background: var(--cyan-deep);
+}
+
+.nav-tab.active {
+  color: var(--cyan);
+  border-color: var(--border-bright);
+  background: var(--cyan-deep);
+  box-shadow: 0 0 16px var(--cyan-glow), inset 0 0 12px var(--cyan-deep);
+}
+
+.nav-meta-badge {
+  margin-left: auto;
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 5px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px;
+}
+
+.nav-meta-badge span { color: var(--cyan-dim); }
+
+/* ══════════════════════════════════════════
+   MAIN LAYOUT
+══════════════════════════════════════════ */
+#app-root {
+  position: relative;
+  z-index: 1;
+  max-width: 1380px;
+  margin: 0 auto;
+  padding: 32px 24px 80px;
+}
+
+.view { display: none; animation: viewIn 0.35s ease forwards; }
+.view.active { display: block; }
+
+@keyframes viewIn {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ══════════════════════════════════════════
+   PAGE HEADER
+══════════════════════════════════════════ */
+.page-header {
+  margin-bottom: 36px;
+}
+
+.page-header-eyebrow {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--cyan-dim);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.page-header-eyebrow::before {
+  content: '';
+  display: inline-block;
+  width: 24px;
+  height: 1px;
+  background: var(--cyan-dim);
+}
+
+.page-header-title {
+  font-family: var(--font-display);
+  font-size: clamp(22px, 4vw, 36px);
+  font-weight: 900;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+}
+
+.page-header-title .accent { color: var(--cyan); }
+
+.page-header-desc {
+  margin-top: 10px;
+  font-size: 14px;
+  color: var(--text-secondary);
+  max-width: 520px;
+  font-weight: 300;
+}
+
+.meta-freshness {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 5px 14px;
+  background: rgba(79,209,255,0.06);
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.freshness-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: #4ade80;
+  box-shadow: 0 0 6px #4ade80;
+  animation: pulse-dot 2.4s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  0%,100% { opacity:1; transform:scale(1); }
+  50% { opacity:0.5; transform:scale(0.8); }
+}
+.freshness-sep { color: var(--text-muted); }
+.meta-freshness strong { color: var(--cyan); font-weight: 600; }
+
+/* ══════════════════════════════════════════
+   FILTER BAR
+══════════════════════════════════════════ */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 28px;
+  align-items: center;
+}
+
+.filter-label {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-right: 4px;
+}
+
+.filter-chip {
+  padding: 5px 14px;
+  border-radius: 20px;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.filter-chip:hover {
+  border-color: var(--border-mid);
+  color: var(--text-primary);
+}
+
+.filter-chip.active {
+  color: var(--bg-void);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+/* Type chip colours */
+.filter-chip[data-type="All"].active    { background: var(--cyan); }
+.filter-chip[data-type="Dark"].active   { background: #7c3aed; color: #e8f0ff; }
+.filter-chip[data-type="Fire"].active   { background: #ef4444; color: #fff; }
+.filter-chip[data-type="Grass"].active  { background: #16a34a; color: #fff; }
+.filter-chip[data-type="Water"].active  { background: #2563eb; color: #fff; }
+.filter-chip[data-type="Lightning"].active { background: #ca8a04; color: #fff; }
+.filter-chip[data-type="Psychic"].active { background: #db2777; color: #fff; }
+.filter-chip[data-type="Fighting"].active { background: #92400e; color: #f5d0a9; }
+.filter-chip[data-type="Metal"].active  { background: #6b7280; color: #fff; }
+.filter-chip[data-type="Colorless"].active { background: #d1d5db; color: #1f2937; }
+.filter-chip[data-type="Dragon"].active { background: linear-gradient(90deg,#2563eb,#7c3aed); color: #fff; }
+
+/* ══════════════════════════════════════════
+   TIER SECTION
+══════════════════════════════════════════ */
+.tier-section { margin-bottom: 32px; }
+
+.tier-label-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.tier-badge {
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  flex-shrink: 0;
+}
+
+.tier-badge.s {
+  background: linear-gradient(135deg, rgba(251,191,36,0.15), rgba(251,191,36,0.05));
+  color: var(--tier-s-color);
+  border: 1px solid rgba(251,191,36,0.4);
+  box-shadow: 0 0 24px var(--tier-s-glow);
+}
+.tier-badge.a {
+  background: linear-gradient(135deg, rgba(167,139,250,0.15), rgba(167,139,250,0.05));
+  color: var(--tier-a-color);
+  border: 1px solid rgba(167,139,250,0.4);
+  box-shadow: 0 0 20px var(--tier-a-glow);
+}
+.tier-badge.b {
+  background: linear-gradient(135deg, rgba(79,209,255,0.1), rgba(79,209,255,0.03));
+  color: var(--tier-b-color);
+  border: 1px solid rgba(79,209,255,0.3);
+}
+.tier-badge.c {
+  background: rgba(139,160,196,0.06);
+  color: var(--tier-c-color);
+  border: 1px solid rgba(139,160,196,0.2);
+}
+
+.tier-rule {
+  flex: 1;
+  height: 1px;
+}
+
+.tier-rule.s { background: linear-gradient(90deg, rgba(251,191,36,0.5), transparent); }
+.tier-rule.a { background: linear-gradient(90deg, rgba(167,139,250,0.4), transparent); }
+.tier-rule.b { background: linear-gradient(90deg, rgba(79,209,255,0.3), transparent); }
+.tier-rule.c { background: linear-gradient(90deg, rgba(139,160,196,0.15), transparent); }
+
+.tier-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ══════════════════════════════════════════
+   DECK GRID
+══════════════════════════════════════════ */
+.deck-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+  gap: 18px;
+}
+
+/* ══════════════════════════════════════════
+   DECK CARD
+══════════════════════════════════════════ */
+.deck-card {
+  position: relative;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  cursor: pointer;
+  transition: all var(--transition);
+  display: flex;
+  flex-direction: column;
+}
+
+.deck-card:hover {
+  border-color: var(--border-mid);
+  transform: translateY(-3px) scale(1.01);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5), 0 0 24px var(--cyan-glow);
+}
+
+.deck-card.s-tier {
+  border-color: rgba(251,191,36,0.25);
+  box-shadow: 0 0 30px rgba(251,191,36,0.08);
+}
+.deck-card.s-tier:hover {
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5), 0 0 32px var(--tier-s-glow);
+  border-color: rgba(251,191,36,0.5);
+}
+
+/* Card Strip "Fan" */
+.deck-strip {
+  position: relative;
+  height: 110px;
+  overflow: hidden;
+  background: linear-gradient(180deg, var(--bg-deep) 0%, var(--bg-void) 100%);
+}
+
+.deck-strip-cards {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  padding: 8px 10px 0;
+  gap: 0;
+}
+
+.strip-card-img {
+  width: 72px;
+  height: 100px;
+  object-fit: cover;
+  object-position: top center;
+  border-radius: 6px 6px 0 0;
+  border: 1px solid rgba(255,255,255,0.1);
+  margin-left: -16px;
+  box-shadow: -4px 0 12px rgba(0,0,0,0.6);
+  transition: transform var(--transition);
+  flex-shrink: 0;
+}
+
+.strip-card-img:first-child { margin-left: 0; }
+
+.deck-card:hover .strip-card-img {
+  transform: translateY(-6px);
+}
+
+.deck-card:hover .strip-card-img:nth-child(2) { transform: translateY(-4px); }
+.deck-card:hover .strip-card-img:nth-child(3) { transform: translateY(-2px); }
+
+.deck-strip-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    transparent 40%,
+    rgba(8,11,18,0.7) 100%
+  );
+  pointer-events: none;
+}
+
+/* Tier badge on strip */
+.deck-tier-overlay {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 20px;
+  letter-spacing: 0.06em;
+  backdrop-filter: blur(8px);
+}
+
+.deck-tier-overlay.s { background: rgba(251,191,36,0.2); color: var(--gold); border: 1px solid rgba(251,191,36,0.4); }
+.deck-tier-overlay.a { background: rgba(167,139,250,0.2); color: var(--purple); border: 1px solid rgba(167,139,250,0.35); }
+.deck-tier-overlay.b { background: rgba(79,209,255,0.15); color: var(--cyan); border: 1px solid rgba(79,209,255,0.3); }
+.deck-tier-overlay.c { background: rgba(139,160,196,0.1); color: var(--text-secondary); border: 1px solid rgba(139,160,196,0.2); }
+
+/* Card body */
+.deck-body {
+  padding: 14px 16px 16px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.deck-name {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 0.02em;
+  line-height: 1.3;
+}
+
+.deck-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.type-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 12px;
+  letter-spacing: 0.04em;
+}
+
+.type-Dark       { background: rgba(124,58,237,0.2); color: #c4b5fd; border: 1px solid rgba(124,58,237,0.3); }
+.type-Fire       { background: rgba(239,68,68,0.15); color: #fca5a5; border: 1px solid rgba(239,68,68,0.3); }
+.type-Grass      { background: rgba(22,163,74,0.15); color: #86efac; border: 1px solid rgba(22,163,74,0.3); }
+.type-Water      { background: rgba(37,99,235,0.15); color: #93c5fd; border: 1px solid rgba(37,99,235,0.3); }
+.type-Lightning  { background: rgba(202,138,4,0.15); color: #fde047; border: 1px solid rgba(202,138,4,0.3); }
+.type-Psychic    { background: rgba(219,39,119,0.15); color: #f9a8d4; border: 1px solid rgba(219,39,119,0.3); }
+.type-Fighting   { background: rgba(146,64,14,0.2); color: #d97706; border: 1px solid rgba(146,64,14,0.4); }
+.type-Metal      { background: rgba(107,114,128,0.2); color: #d1d5db; border: 1px solid rgba(107,114,128,0.3); }
+.type-Dragon     { background: linear-gradient(90deg,rgba(37,99,235,0.15),rgba(124,58,237,0.15)); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.35); }
+.type-Colorless  { background: rgba(209,213,219,0.1); color: #e5e7eb; border: 1px solid rgba(209,213,219,0.2); }
+
+.deck-stat {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.deck-stat.win { color: var(--green); }
+
+.deck-winrate-bar {
+  height: 3px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.deck-winrate-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.8s cubic-bezier(0.4,0,0.2,1);
+}
+
+.deck-winrate-fill.s { background: linear-gradient(90deg, var(--gold), #f59e0b); }
+.deck-winrate-fill.a { background: linear-gradient(90deg, var(--purple), #818cf8); }
+.deck-winrate-fill.b { background: linear-gradient(90deg, var(--cyan), #38bdf8); }
+.deck-winrate-fill.c { background: var(--text-muted); }
+
+.deck-stats-row {
+  display: flex;
+  gap: 16px;
+  margin-top: 2px;
+}
+
+.stat-block { display: flex; flex-direction: column; gap: 1px; }
+.stat-val {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.stat-key {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.deck-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 300;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.deck-action {
+  margin-top: auto;
+  padding-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.deck-view-btn {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: gap var(--transition);
+}
+
+.deck-card:hover .deck-view-btn { gap: 10px; }
+
+.deck-card-count {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ══════════════════════════════════════════
+   EMPTY STATE
+══════════════════════════════════════════ */
+.empty-state {
+  grid-column: 1 / -1;
+  padding: 60px 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+}
+
+/* ══════════════════════════════════════════
+   MODAL
+══════════════════════════════════════════ */
+#modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(4,6,12,0.85);
+  z-index: 200;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  animation: overlayIn 0.2s ease;
+}
+
+#modal-overlay.open { display: flex; }
+
+@keyframes overlayIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+#modal-box {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-lg);
+  width: 100%;
+  max-width: 780px;
+  max-height: 88vh;
+  overflow-y: auto;
+  animation: modalIn 0.28s cubic-bezier(0.4,0,0.2,1);
+  box-shadow: 0 40px 100px rgba(0,0,0,0.7), 0 0 40px var(--cyan-glow);
+}
+
+@keyframes modalIn {
+  from { opacity: 0; transform: scale(0.95) translateY(16px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* Scrollbar */
+#modal-box::-webkit-scrollbar { width: 4px; }
+#modal-box::-webkit-scrollbar-track { background: transparent; }
+#modal-box::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 2px; }
+
+.modal-header {
+  position: relative;
+  padding: 24px 24px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.modal-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--border-mid);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition);
+}
+
+.modal-close:hover {
+  background: rgba(248,113,113,0.1);
+  border-color: rgba(248,113,113,0.4);
+  color: var(--red);
+}
+
+.modal-tier-badge {
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 900;
+  flex-shrink: 0;
+}
+
+.modal-deck-name {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.modal-deck-meta {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.modal-stat-chip {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 20px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  letter-spacing: 0.06em;
+}
+
+.modal-stat-chip.win-rate { color: var(--green); border-color: rgba(74,222,128,0.3); background: rgba(74,222,128,0.08); }
+.modal-stat-chip.pop { color: var(--cyan); border-color: rgba(79,209,255,0.3); background: rgba(79,209,255,0.08); }
+
+.modal-body { padding: 20px 24px 28px; }
+
+.modal-section-title {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.modal-section-title::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border-subtle);
+}
+
+/* Card grid in modal */
+.modal-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  gap: 10px;
+  margin-bottom: 28px;
+}
+
+.modal-card-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: default;
+}
+
+.modal-card-img-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 2.5 / 3.5;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-deep);
+  transition: transform var(--transition), box-shadow var(--transition);
+}
+
+.modal-card-img-wrap:hover {
+  transform: scale(1.06) translateY(-3px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.6), 0 0 16px var(--cyan-glow);
+  z-index: 2;
+}
+
+.modal-card-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* ══════════════════════════════════════════
+   CARD LIGHTBOX OVERLAY
+══════════════════════════════════════════ */
+#card-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.88);
+  backdrop-filter: blur(12px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease;
+  cursor: zoom-out;
+}
+#card-lightbox.open {
+  opacity: 1;
+  pointer-events: all;
+}
+#card-lightbox .lb-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  transform: scale(0.88);
+  transition: transform 0.25s cubic-bezier(0.34,1.56,0.64,1);
+  max-width: min(380px, 90vw);
+}
+#card-lightbox.open .lb-inner {
+  transform: scale(1);
+}
+#card-lightbox .lb-card-img {
+  width: 100%;
+  max-width: 360px;
+  border-radius: 14px;
+  box-shadow:
+    0 0 0 2px rgba(79,209,255,0.4),
+    0 0 40px rgba(79,209,255,0.25),
+    0 20px 60px rgba(0,0,0,0.7);
+  display: block;
+}
+#card-lightbox .lb-card-back {
+  width: 100%;
+  max-width: 360px;
+  aspect-ratio: 2.5 / 3.5;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 80px;
+  background: var(--bg-elevated);
+  border: 2px solid var(--border-mid);
+}
+#card-lightbox .lb-info {
+  text-align: center;
+}
+#card-lightbox .lb-name {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 0.03em;
+}
+#card-lightbox .lb-meta {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+#card-lightbox .lb-close-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.modal-card-img-wrap { cursor: zoom-in; }
+
+.modal-card-qty {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  background: rgba(8,11,18,0.85);
+  color: var(--cyan);
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border-mid);
+}
+
+.modal-card-name {
+  font-size: 10px;
+  color: var(--text-secondary);
+  text-align: center;
+  line-height: 1.2;
+  font-weight: 500;
+}
+
+/* Decklist table */
+.decklist-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.decklist-table th {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.decklist-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  vertical-align: middle;
+}
+
+.decklist-table td.qty {
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: var(--text-primary);
+  width: 40px;
+  text-align: center;
+}
+
+.decklist-table td.name { color: var(--text-primary); font-weight: 500; }
+
+.decklist-table tr:last-child td { border-bottom: none; }
+
+.decklist-table tr:hover td { background: rgba(79,209,255,0.03); }
+
+/* Modal strengths/weaknesses */
+.matchup-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 4px;
+}
+
+.matchup-col-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.matchup-col-title.good { color: var(--green); }
+.matchup-col-title.bad  { color: var(--red); }
+
+.matchup-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.matchup-tag {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 12px;
+}
+
+/* Share URL bar */
+.share-bar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  background: var(--bg-deep);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 8px 14px;
+  margin-top: 20px;
+}
+
+.share-url {
+  flex: 1;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  color: var(--cyan-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: transparent;
+  border: none;
+  outline: none;
+  cursor: text;
+  user-select: all;
+}
+
+.share-copy-btn {
+  padding: 5px 14px;
+  background: var(--cyan-deep);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-sm);
+  color: var(--cyan);
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: all var(--transition);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.share-copy-btn:hover {
+  background: rgba(79,209,255,0.15);
+  box-shadow: 0 0 12px var(--cyan-glow);
+}
+
+.share-copy-btn.copied {
+  color: var(--green);
+  border-color: rgba(74,222,128,0.4);
+  background: rgba(74,222,128,0.08);
+}
+
+/* ══════════════════════════════════════════
+   STATS VIEW
+══════════════════════════════════════════ */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+  margin-bottom: 36px;
+}
+
+.stat-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 20px;
+}
+
+.stat-card-val {
+  font-family: var(--font-display);
+  font-size: 32px;
+  font-weight: 900;
+  color: var(--cyan);
+  line-height: 1;
+}
+
+.stat-card-key {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-top: 6px;
+  font-weight: 500;
+}
+
+/* Type breakdown bars */
+.type-breakdown { display: flex; flex-direction: column; gap: 12px; }
+
+.type-row { display: flex; align-items: center; gap: 12px; }
+
+.type-row-name {
+  width: 80px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.type-row-bar {
+  flex: 1;
+  height: 8px;
+  background: rgba(255,255,255,0.05);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.type-row-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 1s cubic-bezier(0.4,0,0.2,1);
+}
+
+.type-row-pct {
+  width: 40px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* ══════════════════════════════════════════
+   SCROLLBAR (global)
+══════════════════════════════════════════ */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: var(--bg-void); }
+::-webkit-scrollbar-thumb { background: var(--border-subtle); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-mid); }
+
+/* ══════════════════════════════════════════
+   RESPONSIVE
+══════════════════════════════════════════ */
+@media (max-width: 640px) {
+  #app-nav { padding: 0 14px; gap: 16px; }
+  .nav-brand-text { font-size: 11px; }
+  .nav-tab { padding: 5px 10px; font-size: 9px; }
+  #app-root { padding: 20px 14px 60px; }
+  .deck-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
+  .modal-card-grid { grid-template-columns: repeat(auto-fill, minmax(74px, 1fr)); }
+  .matchup-grid { grid-template-columns: 1fr; }
+}
+
+/* Tooltip */
+[data-tip] { position: relative; }
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-mid);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+  z-index: 50;
+}
+
+[data-tip]:hover::after { opacity: 1; }
+
+/* Card back placeholder */
+.card-back {
+  width: 100%;
+  height: 100%;
+  background:
+    repeating-linear-gradient(
+      45deg,
+      rgba(79,209,255,0.04),
+      rgba(79,209,255,0.04) 2px,
+      transparent 2px,
+      transparent 10px
+    ),
+    var(--bg-deep);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  color: var(--border-mid);
+}
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════
+     NAVIGATION
+══════════════════════════════════════════ -->
+<nav id="app-nav">
+  <a class="nav-brand" href="#" onclick="return false;">
+    <div class="nav-brand-icon">⚡</div>
+    <div>
+      <div class="nav-brand-text">META ENGINE</div>
+      <div class="nav-brand-sub">Fantastical Parade B2</div>
+    </div>
+  </a>
+
+  <div class="nav-tabs">
+    <button class="nav-tab active" data-view="tier-list">Tier List</button>
+    <button class="nav-tab" data-view="all-decks">All Decks</button>
+    <button class="nav-tab" data-view="meta-stats">Meta Stats</button>
+  </div>
+
+  <div class="nav-meta-badge">Updated <span>Mar 2026</span></div>
+</nav>
+
+<!-- ══════════════════════════════════════════
+     APP ROOT
+══════════════════════════════════════════ -->
+<main id="app-root">
+
+  <!-- TIER LIST VIEW -->
+  <div class="view active" id="view-tier-list">
+    <div class="page-header">
+      <div class="page-header-eyebrow">B2 Competitive Meta</div>
+      <h1 class="page-header-title">Current <span class="accent">Tier List</span></h1>
+      <p class="page-header-desc">Live meta snapshot ranked by win rate and tournament representation. Click any deck to view the full decklist.</p>
+      <div class="meta-freshness" id="meta-freshness-badge">
+        <span class="freshness-dot"></span>
+        <span id="meta-updated-label">Data: <strong id="meta-updated-date">Mar 2026</strong></span>
+        <span class="freshness-sep">·</span>
+        <span id="meta-source-label">Source: Limitless + ptcgpocket.gg</span>
+      </div>
+    </div>
+
+    <div class="filter-bar" id="tier-filter-bar">
+      <span class="filter-label">Type:</span>
+      <button class="filter-chip active" data-type="All">All</button>
+      <button class="filter-chip" data-type="Dark">🌑 Dark</button>
+      <button class="filter-chip" data-type="Fire">🔥 Fire</button>
+      <button class="filter-chip" data-type="Grass">🌿 Grass</button>
+      <button class="filter-chip" data-type="Water">💧 Water</button>
+      <button class="filter-chip" data-type="Lightning">⚡ Lightning</button>
+      <button class="filter-chip" data-type="Psychic">🔮 Psychic</button>
+      <button class="filter-chip" data-type="Fighting">🥊 Fighting</button>
+      <button class="filter-chip" data-type="Dragon">🐉 Dragon</button>
+    </div>
+
+    <div id="tier-list-container"></div>
+  </div>
+
+  <!-- ALL DECKS VIEW -->
+  <div class="view" id="view-all-decks">
+    <div class="page-header">
+      <div class="page-header-eyebrow">Full Database</div>
+      <h1 class="page-header-title">All <span class="accent">Decklists</span></h1>
+      <p class="page-header-desc">Every tracked deck in the B2 meta. Sorted by win rate.</p>
+    </div>
+
+    <div class="filter-bar" id="all-decks-filter-bar">
+      <span class="filter-label">Type:</span>
+      <button class="filter-chip active" data-type="All">All</button>
+      <button class="filter-chip" data-type="Dark">🌑 Dark</button>
+      <button class="filter-chip" data-type="Fire">🔥 Fire</button>
+      <button class="filter-chip" data-type="Grass">🌿 Grass</button>
+      <button class="filter-chip" data-type="Water">💧 Water</button>
+      <button class="filter-chip" data-type="Lightning">⚡ Lightning</button>
+      <button class="filter-chip" data-type="Psychic">🔮 Psychic</button>
+      <button class="filter-chip" data-type="Fighting">🥊 Fighting</button>
+      <button class="filter-chip" data-type="Dragon">🐉 Dragon</button>
+    </div>
+
+    <div class="deck-grid" id="all-decks-grid"></div>
+  </div>
+
+  <!-- META STATS VIEW -->
+  <div class="view" id="view-meta-stats">
+    <div class="page-header">
+      <div class="page-header-eyebrow">Analytics</div>
+      <h1 class="page-header-title">Meta <span class="accent">Statistics</span></h1>
+      <p class="page-header-desc">Type distribution, representation rates, and win rate breakdown for B2 Fantastical Parade.</p>
+    </div>
+
+    <div class="stats-grid" id="stats-summary"></div>
+    <h3 class="modal-section-title">Type Representation</h3>
+    <div class="type-breakdown" id="type-breakdown"></div>
+  </div>
+
+</main>
+
+<!-- ══════════════════════════════════════════
+     DECK MODAL
+══════════════════════════════════════════ -->
+<div id="modal-overlay" role="dialog" aria-modal="true">
+  <div id="modal-box">
+    <div class="modal-header">
+      <div class="modal-tier-badge" id="modal-tier-badge"></div>
+      <div>
+        <div class="modal-deck-name" id="modal-deck-name"></div>
+        <div class="modal-deck-meta" id="modal-deck-meta"></div>
+      </div>
+      <button class="modal-close" id="modal-close" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     TEMPLATES
+══════════════════════════════════════════ -->
+<template id="tpl-deck-card">
+  <div class="deck-card">
+    <div class="deck-strip">
+      <div class="deck-strip-cards"></div>
+      <div class="deck-strip-overlay"></div>
+      <div class="deck-tier-overlay"></div>
+    </div>
+    <div class="deck-body">
+      <div class="deck-name"></div>
+      <div class="deck-meta-row">
+        <span class="type-badge"></span>
+        <span class="deck-stat"></span>
+      </div>
+      <div class="deck-winrate-bar"><div class="deck-winrate-fill"></div></div>
+      <div class="deck-stats-row">
+        <div class="stat-block">
+          <div class="stat-val win-val"></div>
+          <div class="stat-key">Win Rate</div>
+        </div>
+        <div class="stat-block">
+          <div class="stat-val pop-val"></div>
+          <div class="stat-key">Popularity</div>
+        </div>
+        <div class="stat-block">
+          <div class="stat-val cards-val"></div>
+          <div class="stat-key">Cards</div>
+        </div>
+      </div>
+      <div class="deck-desc"></div>
+      <div class="deck-action">
+        <div class="deck-view-btn">View Decklist →</div>
+        <div class="deck-card-count"></div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+/* ══════════════════════════════════════════════════════════════
+   DATABASE — CARD REGISTRY
+   Card IDs match Limitless Pocket DB (pocket.limitlesstcg.com)
+   URL format confirmed: /pocket/{SET}/{SET}_{NUM}_EN_SM.webp
+══════════════════════════════════════════════════════════════ */
+const CARD_REGISTRY = {
+  "A1-087": { name: "Froakie", type: "Water", pack: "Genetic Apex", rarity: "C" },
+  "A1-088": { name: "Frogadier", type: "Water", pack: "Genetic Apex", rarity: "U" },
+  "A1-089": { name: "Greninja", type: "Water", pack: "Genetic Apex", rarity: "R" },
+  "A1-220": { name: "Misty", type: "Trainer", pack: "Genetic Apex", rarity: "R" },
+  "A1-223": { name: "Giovanni", type: "Trainer", pack: "Genetic Apex", rarity: "R" },
+  "A1-225": { name: "Sabrina", type: "Trainer", pack: "Genetic Apex", rarity: "R" },
+  "A2-109": { name: "Darkrai", type: "Dark", pack: "Space-Time Smackdown", rarity: "R" },
+  "A2-110": { name: "Darkrai ex", type: "Dark", pack: "Space-Time Smackdown", rarity: "EX" },
+  "A2b-035": { name: "Giratina ex", type: "Psychic", pack: "Shining Revelry", rarity: "EX" },
+  "A3-034": { name: "Oricorio", type: "Fire", pack: "Celestial Guardians", rarity: "U" },
+  "A4a-020": { name: "Suicune ex", type: "Water", pack: "Secluded Springs", rarity: "EX" },
+  "B1-102": { name: "Mega Altaria ex", type: "Colorless", pack: "Mega Rising", rarity: "EX" },
+  "B1-109": { name: "Chingling", type: "Psychic", pack: "Mega Rising", rarity: "C" },
+  "B1-150": { name: "Absol", type: "Dark", pack: "Mega Rising", rarity: "R" },
+  "B1-151": { name: "Mega Absol ex", type: "Dark", pack: "Mega Rising", rarity: "EX" },
+  "B1-155": { name: "Deino", type: "Dark", pack: "Mega Rising", rarity: "C" },
+  "B1-156": { name: "Zweilous", type: "Dark", pack: "Mega Rising", rarity: "U" },
+  "B1-157": { name: "Hydreigon", type: "Dark", pack: "Mega Rising", rarity: "R" },
+  "B1-196": { name: "Swablu", type: "Colorless", pack: "Mega Rising", rarity: "C" },
+  "B1-197": { name: "Altaria", type: "Colorless", pack: "Mega Rising", rarity: "U" },
+  "B1-225": { name: "Copycat", type: "Trainer", pack: "Mega Rising", rarity: "U" },
+  "B1a-024": { name: "Magnemite", type: "Lightning", pack: "Crimson Blaze", rarity: "C" },
+  "B1a-025": { name: "Magneton", type: "Lightning", pack: "Crimson Blaze", rarity: "U" },
+  "B1a-026": { name: "Magnezone", type: "Lightning", pack: "Crimson Blaze", rarity: "R" },
+  "B2-071": { name: "Pumpkaboo", type: "Psychic", pack: "Fantastical Parade", rarity: "C" },
+  "B2-072": { name: "Gourgeist", type: "Psychic", pack: "Fantastical Parade", rarity: "R" },
+  "B2-073": { name: "Mimikyu ex", type: "Psychic", pack: "Fantastical Parade", rarity: "EX" },
+  "B2-191": { name: "Sightseer", type: "Trainer", pack: "Fantastical Parade", rarity: "U" },
+  "B2a-001": { name: "Greavard", type: "Dark", pack: "Horizon of Dreams", rarity: "C" },
+  "B2a-002": { name: "Houndstone", type: "Dark", pack: "Horizon of Dreams", rarity: "R" },
+  "P-A-005": { name: "Poké Ball", type: "Trainer", pack: "Promo-A", rarity: "PR" },
+  "P-A-006": { name: "Red Card", type: "Trainer", pack: "Promo-A", rarity: "PR" },
+  "P-A-007": { name: "Professor's Research", type: "Trainer", pack: "Promo-A", rarity: "PR" }
+};
+
+/* ══════════════════════════════════════════════════════════════
+   DATABASE — META SNAPSHOT
+   Rules: exactly 20 cards, max 2 copies per card
+══════════════════════════════════════════════════════════════ */
+const META_SNAPSHOT = [
+  // Auto-generated by update-meta.js — Mar 2026
+  // Sources: Limitless API (real win rates) + ptcgpocket.gg (editorial tiers)
+  {
+    id: "mimikyu-ex-greninja",
+    name: "Mimikyu ex Greninja",
+    tier: "A",
+    type: "Water",
+    winRate: 61.4,
+    popularity: 0.17,
+    description: "Consistent mid-speed Water/Psychic deck with 61.4% tournament win rate across 11 recorded games. Moderate disruption options.",
+    strengths: [],
+    weaknesses: [],
+    cards: [
+      { id: "B2-073", qty: 2 },
+      { id: "P-A-005", qty: 2 },
+      { id: "P-A-007", qty: 2 },
+      { id: "A1-220", qty: 2 },
+      { id: "A1-225", qty: 2 },
+      { id: "B2-191", qty: 2 },
+      { id: "B1-225", qty: 2 }
+    ]
+  },
+  {
+    id: "magnezone-bellibolt-ex",
+    name: "Magnezone Bellibolt ex",
+    tier: "A",
+    type: "Lightning",
+    winRate: 52.4,
+    popularity: 11.55,
+    description: "Slow-burn setup Lightning deck with 52.4% tournament win rate across 741 recorded games. Straightforward aggro approach.",
+    strengths: [],
+    weaknesses: [],
+    cards: [
+      { id: "B1a-024", qty: 2 },
+      { id: "B1a-025", qty: 2 },
+      { id: "B1a-026", qty: 2 },
+      { id: "P-A-005", qty: 2 },
+      { id: "P-A-007", qty: 2 },
+      { id: "A1-223", qty: 2 },
+      { id: "A1-225", qty: 2 },
+      { id: "B2-191", qty: 2 },
+      { id: "B1-225", qty: 2 }
+    ]
+  },
+  {
+    id: "mega-altaria-ex-greninja",
+    name: "Mega Altaria ex Greninja",
+    tier: "B",
+    type: "Colorless",
+    winRate: 49.8,
+    popularity: 12.95,
+    description: "Consistent mid-speed Colorless deck with 49.8% tournament win rate across 831 recorded games. Straightforward aggro approach.",
+    strengths: [],
+    weaknesses: [],
+    cards: [
+      { id: "B1-196", qty: 2 },
+      { id: "B1-197", qty: 2 },
+      { id: "B1-102", qty: 2 },
+      { id: "P-A-005", qty: 2 },
+      { id: "P-A-007", qty: 2 },
+      { id: "A1-225", qty: 2 },
+      { id: "B2-191", qty: 2 },
+      { id: "B1-225", qty: 2 }
+    ]
+  },
+  {
+    id: "mega-altaria-ex-gourgeist",
+    name: "Mega Altaria ex Gourgeist",
+    tier: "B",
+    type: "Colorless",
+    winRate: 55.5,
+    popularity: 3.79,
+    description: "Consistent mid-speed Colorless deck with 55.5% tournament win rate across 243 recorded games. Straightforward aggro approach.",
+    strengths: [],
+    weaknesses: [],
+    cards: [
+      { id: "B1-196", qty: 2 },
+      { id: "B1-197", qty: 2 },
+      { id: "B1-102", qty: 2 },
+      { id: "B2-071", qty: 2 },
+      { id: "B2-072", qty: 2 },
+      { id: "B2a-001", qty: 2 },
+      { id: "B2a-002", qty: 2 },
+      { id: "P-A-005", qty: 2 },
+      { id: "P-A-007", qty: 2 },
+      { id: "A1-225", qty: 2 }
+    ]
+  },
+  {
+    id: "greninja-mega-absol-ex",
+    name: "Greninja Mega Absol ex",
+    tier: "B",
+    type: "Water",
+    winRate: 51.8,
+    popularity: 7.47,
+    description: "Consistent mid-speed Water/Dark deck with 51.8% tournament win rate across 479 recorded games. Straightforward aggro approach.",
+    strengths: [],
+    weaknesses: [],
+    cards: [
+      { id: "B1-150", qty: 2 },
+      { id: "B1-151", qty: 2 },
+      { id: "P-A-005", qty: 2 },
+      { id: "P-A-007", qty: 2 },
+      { id: "A1-220", qty: 2 },
+      { id: "A1-225", qty: 2 },
+      { id: "B2-191", qty: 2 },
+      { id: "B1-225", qty: 2 }
+    ]
+  },
+  {
+    id: "mega-altaria-ex",
+    name: "Mega Altaria ex",
+    tier: "B",
+    type: "Colorless",
+    winRate: 56,
+    popularity: 1.15,
+    description: "Consistent mid-speed Colorless deck with 56.0% tournament win rate across 74 recorded games. Straightforward aggro approach.",
+    strengths: [],
+    weaknesses: [],
+    cards: [
+      { id: "B1-196", qty: 2 },
+      { id: "B1-197", qty: 2 },
+      { id: "B1-102", qty: 2 },
+      { id: "P-A-005", qty: 2 },
+      { id: "P-A-007", qty: 2 },
+      { id: "A1-225", qty: 2 },
+      { id: "B2-191", qty: 2 },
+      { id: "B1-225", qty: 2 }
+    ]
+  },
+  {
+    id: "mega-absol-ex-darkrai-ex",
+    name: "Mega Absol ex Darkrai ex",
+    tier: "B",
+    type: "Dark",
+    winRate: 56.5,
+    popularity: 0.33,
+    description: "Consistent mid-speed Dark deck with 56.5% tournament win rate across 21 recorded games. Straightforward aggro approach.",
+    strengths: [],
+    weaknesses: [],
+    cards: [
+      { id: "B1-150", qty: 2 },
+      { id: "B1-151", qty: 2 },
+      { id: "A2-109", qty: 2 },
+      { id: "A2-110", qty: 2 },
+      { id: "P-A-005", qty: 2 },
+      { id: "P-A-007", qty: 2 },
+      { id: "A1-223", qty: 2 },
+      { id: "P-A-006", qty: 2 },
+      { id: "A1-225", qty: 2 },
+      { id: "B2-191", qty: 2 }
+    ]
+  },
+  {
+    id: "mega-altaria-ex-altaria",
+    name: "Mega Altaria ex Altaria",
+    tier: "B",
+    type: "Colorless",
+    winRate: 56.3,
+    popularity: 0.61,
+    description: "Consistent mid-speed Colorless deck with 56.3% tournament win rate across 39 recorded games. Straightforward aggro approach.",
+    strengths: [],
+    weaknesses: [],
+    cards: [
+      { id: "B1-196", qty: 2 },
+      { id: "B1-197", qty: 2 },
+      { id: "B1-102", qty: 2 },
+      { id: "P-A-005", qty: 2 },
+      { id: "P-A-007", qty: 2 },
+      { id: "A1-225", qty: 2 },
+      { id: "B2-191", qty: 2 },
+      { id: "B1-225", qty: 2 }
+    ]
+  },
+  {
+    id: "gourgeist-houndstone",
+    name: "Gourgeist Houndstone",
+    tier: "B",
+    type: "Psychic",
+    winRate: 52.4,
+    popularity: 1.57,
+    description: "Slow-burn setup Psychic deck with 52.4% tournament win rate across 101 recorded games. Moderate disruption options.",
+    strengths: [],
+    weaknesses: [],
+    cards: [
+      { id: "B2-071", qty: 2 },
+      { id: "B2-072", qty: 2 },
+      { id: "B2a-001", qty: 2 },
+      { id: "B2a-002", qty: 2 },
+      { id: "P-A-005", qty: 2 },
+      { id: "P-A-007", qty: 2 },
+      { id: "A1-225", qty: 2 },
+      { id: "P-A-006", qty: 2 },
+      { id: "B2-191", qty: 2 },
+      { id: "B1-225", qty: 2 }
+    ]
+  },
+  {
+    id: "mega-altaria-ex-banette",
+    name: "Mega Altaria ex Banette",
+    tier: "B",
+    type: "Colorless",
+    winRate: 56.1,
+    popularity: 0.31,
+    description: "Consistent mid-speed Colorless deck with 56.1% tournament win rate across 20 recorded games. Straightforward aggro approach.",
+    strengths: [],
+    weaknesses: [],
+    cards: [
+      { id: "B1-196", qty: 2 },
+      { id: "B1-197", qty: 2 },
+      { id: "B1-102", qty: 2 },
+      { id: "P-A-005", qty: 2 },
+      { id: "P-A-007", qty: 2 },
+      { id: "A1-225", qty: 2 },
+      { id: "B2-191", qty: 2 },
+      { id: "B1-225", qty: 2 }
+    ]
+  },
+  {
+    id: "magnezone-mega-absol-ex",
+    name: "Magnezone Mega Absol ex",
+    tier: "B",
+    type: "Lightning",
+    winRate: 55.4,
+    popularity: 0.19,
+    description: "Slow-burn setup Lightning deck with 55.4% tournament win rate across 12 recorded games. Straightforward aggro approach.",
+    strengths: [],
+    weaknesses: [],
+    cards: [
+      { id: "B1-150", qty: 2 },
+      { id: "B1-151", qty: 2 },
+      { id: "B1a-024", qty: 2 },
+      { id: "B1a-025", qty: 2 },
+      { id: "B1a-026", qty: 2 },
+      { id: "P-A-005", qty: 2 },
+      { id: "P-A-007", qty: 2 },
+      { id: "A1-223", qty: 2 },
+      { id: "A1-225", qty: 2 },
+      { id: "B2-191", qty: 2 }
+    ]
+  },
+  {
+    id: "mega-altaria-ex-altaria",
+    name: "Mega Altaria ex Altaria",
+    tier: "B",
+    type: "Colorless",
+    winRate: 54.3,
+    popularity: 0.2,
+    description: "Consistent mid-speed Colorless deck with 54.3% tournament win rate across 13 recorded games. Straightforward aggro approach.",
+    strengths: [],
+    weaknesses: [],
+    cards: [
+      { id: "B1-196", qty: 2 },
+      { id: "B1-197", qty: 2 },
+      { id: "B1-102", qty: 2 },
+      { id: "P-A-005", qty: 2 },
+      { id: "P-A-007", qty: 2 },
+      { id: "A1-225", qty: 2 },
+      { id: "B2-191", qty: 2 },
+      { id: "B1-225", qty: 2 }
+    ]
+  },
+  {
+    id: "suicune-ex-baxcalibur",
+    name: "Suicune ex Baxcalibur",
+    tier: "C",
+    type: "Water",
+    winRate: 46.8,
+    popularity: 13.14,
+    description: "Consistent mid-speed Water deck with 46.8% tournament win rate across 843 recorded games. Straightforward aggro approach.",
+    strengths: [],
+    weaknesses: [],
+    cards: [
+      { id: "A4a-020", qty: 2 },
+      { id: "P-A-005", qty: 2 },
+      { id: "P-A-007", qty: 2 },
+      { id: "A1-220", qty: 2 },
+      { id: "A1-225", qty: 2 },
+      { id: "B2-191", qty: 2 },
+      { id: "B1-225", qty: 2 }
+    ]
+  },
+  {
+    id: "hydreigon-mega-absol-ex",
+    name: "Hydreigon Mega Absol ex",
+    tier: "C",
+    type: "Dark",
+    winRate: 48.2,
+    popularity: 3.99,
+    description: "Slow-burn setup Dark deck with 48.2% tournament win rate across 256 recorded games. Straightforward aggro approach.",
+    strengths: [],
+    weaknesses: [],
+    cards: [
+      { id: "B1-155", qty: 2 },
+      { id: "B1-156", qty: 2 },
+      { id: "B1-157", qty: 2 },
+      { id: "B1-150", qty: 2 },
+      { id: "B1-151", qty: 2 },
+      { id: "P-A-005", qty: 2 },
+      { id: "P-A-007", qty: 2 },
+      { id: "A1-223", qty: 2 },
+      { id: "P-A-006", qty: 2 },
+      { id: "A1-225", qty: 2 }
+    ]
+  },
+  {
+    id: "bellibolt-ex-zeraora",
+    name: "Bellibolt ex Zeraora",
+    tier: "C",
+    type: "Colorless",
+    winRate: 48.4,
+    popularity: 5.81,
+    description: "Consistent mid-speed Colorless deck with 48.4% tournament win rate across 373 recorded games. Straightforward aggro approach.",
+    strengths: [],
+    weaknesses: [],
+    cards: [
+      { id: "P-A-005", qty: 2 },
+      { id: "P-A-007", qty: 2 },
+      { id: "A1-225", qty: 2 },
+      { id: "B2-191", qty: 2 },
+      { id: "B1-225", qty: 2 }
+    ]
+  },
+  {
+    id: "galvantula-greninja",
+    name: "Galvantula Greninja",
+    tier: "C",
+    type: "Water",
+    winRate: 50.6,
+    popularity: 0.45,
+    description: "Consistent mid-speed Water deck with 50.6% tournament win rate across 29 recorded games. Straightforward aggro approach.",
+    strengths: [],
+    weaknesses: [],
+    cards: [
+      { id: "A1-087", qty: 2 },
+      { id: "A1-088", qty: 2 },
+      { id: "A1-089", qty: 2 },
+      { id: "P-A-005", qty: 2 },
+      { id: "P-A-007", qty: 2 },
+      { id: "A1-220", qty: 2 },
+      { id: "A1-225", qty: 2 },
+      { id: "B2-191", qty: 2 },
+      { id: "B1-225", qty: 2 }
+    ]
+  },
+  {
+    id: "mega-altaria-ex-chingling",
+    name: "Mega Altaria ex Chingling",
+    tier: "C",
+    type: "Colorless",
+    winRate: 49,
+    popularity: 1.71,
+    description: "Consistent mid-speed Colorless deck with 49.0% tournament win rate across 110 recorded games. Moderate disruption options.",
+    strengths: [],
+    weaknesses: [],
+    cards: [
+      { id: "B1-196", qty: 2 },
+      { id: "B1-197", qty: 2 },
+      { id: "B1-102", qty: 2 },
+      { id: "B1-109", qty: 2 },
+      { id: "P-A-005", qty: 2 },
+      { id: "P-A-007", qty: 2 },
+      { id: "A1-225", qty: 2 },
+      { id: "B2-191", qty: 2 },
+      { id: "B1-225", qty: 2 }
+    ]
+  },
+  {
+    id: "greninja-oricorio",
+    name: "Greninja Oricorio",
+    tier: "C",
+    type: "Water",
+    winRate: 47.9,
+    popularity: 0.75,
+    description: "Blazing fast Water deck with 47.9% tournament win rate across 48 recorded games. Straightforward aggro approach.",
+    strengths: [],
+    weaknesses: [],
+    cards: [
+      { id: "A1-087", qty: 2 },
+      { id: "A1-088", qty: 2 },
+      { id: "A1-089", qty: 2 },
+      { id: "A3-034", qty: 2 },
+      { id: "P-A-005", qty: 2 },
+      { id: "P-A-007", qty: 2 },
+      { id: "A1-220", qty: 2 },
+      { id: "A1-225", qty: 2 },
+      { id: "B2-191", qty: 2 },
+      { id: "B1-225", qty: 2 }
+    ]
+  },
+  {
+    id: "giratina-ex-darkrai-ex",
+    name: "Giratina ex Darkrai ex",
+    tier: "C",
+    type: "Dark",
+    winRate: 52.9,
+    popularity: 0.45,
+    description: "Consistent mid-speed Dark/Psychic deck with 52.9% tournament win rate across 29 recorded games. Moderate disruption options.",
+    strengths: [],
+    weaknesses: [],
+    cards: [
+      { id: "A2-109", qty: 2 },
+      { id: "A2-110", qty: 2 },
+      { id: "A2b-035", qty: 2 },
+      { id: "P-A-005", qty: 2 },
+      { id: "P-A-007", qty: 2 },
+      { id: "A1-223", qty: 2 },
+      { id: "P-A-006", qty: 2 },
+      { id: "A1-225", qty: 2 },
+      { id: "B2-191", qty: 2 },
+      { id: "B1-225", qty: 2 }
+    ]
+  },
+  {
+    id: "silvally",
+    name: "Silvally",
+    tier: "C",
+    type: "Colorless",
+    winRate: 51.6,
+    popularity: 0.25,
+    description: "Consistent mid-speed Colorless deck with 51.6% tournament win rate across 16 recorded games. Straightforward aggro approach.",
+    strengths: [],
+    weaknesses: [],
+    cards: [
+      { id: "P-A-005", qty: 2 },
+      { id: "P-A-007", qty: 2 },
+      { id: "A1-225", qty: 2 },
+      { id: "B2-191", qty: 2 },
+      { id: "B1-225", qty: 2 }
+    ]
+  }
+];
+
+/* ══════════════════════════════════════════════════════════════
+   IMAGE ASSET RESOLVER
+   Confirmed URL pattern (from pocket.limitlesstcg.com):
+   https://limitlesstcg.nyc3.cdn.digitaloceanspaces.com/pocket
+     /{SET}/{SET}_{NUM}_EN_SM.webp
+   Examples:
+     B2-191  → /pocket/B2/B2_191_EN_SM.webp
+     B1a-077 → /pocket/B1a/B1a_077_EN_SM.webp
+     P-A-005 → /pocket/P-A/P-A_005_EN_SM.webp
+══════════════════════════════════════════════════════════════ */
+const CDN_BASE = "https://limitlesstcg.nyc3.cdn.digitaloceanspaces.com/pocket";
+
+function getCardArt(id) {
+  if (!id) return null;
+
+  // Promo: "P-A-005" → setCode="P-A", num="005"
+  if (id.startsWith("P-A-")) {
+    const num = id.slice(4).padStart(3, "0");
+    return `${CDN_BASE}/P-A/P-A_${num}_EN_SM.webp`;
+  }
+
+  // Use lastIndexOf so "B1a-077" → setCode="B1a", num="077"
+  // and "B2-191" → setCode="B2", num="191"
+  const dash = id.lastIndexOf("-");
+  if (dash === -1) return null;
+  const setCode = id.substring(0, dash);
+  const num     = String(parseInt(id.substring(dash + 1), 10)).padStart(3, "0");
+  return `${CDN_BASE}/${setCode}/${setCode}_${num}_EN_SM.webp`;
+}
+
+function handleImgError(img) {
+  if (img.dataset.errored) return;
+  img.dataset.errored = "1";
+  // Use replaceWith so we operate on the element itself — never touches parentElement,
+  // which may be null if the error fires before the img is appended to the DOM.
+  // This also preserves all sibling nodes (qty badges, etc.) in the parent.
+  const placeholder = document.createElement("div");
+  placeholder.className = "card-back";
+  placeholder.textContent = "🃏";
+  if (img.parentNode) {
+    img.replaceWith(placeholder);
+  }
+  // If not yet in DOM, just hide it — it will be replaced when appended
+  img.style.display = "none";
+}
+
+function makeSafeImg(url, altText, className) {
+  const img = document.createElement("img");
+  img.className = className;
+  // NEVER use loading="lazy" here — lazy images inside display:none containers
+  // (the modal starts hidden) get registered as off-viewport and NEVER load,
+  // even after the container becomes visible.
+  img.loading   = "eager";
+  img.decoding  = "async";
+  img.alt       = altText;
+  img.onerror   = function() { handleImgError(this); };
+  img.src = url;
+  return img;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   CARD LIGHTBOX — click a card to view it large
+══════════════════════════════════════════════════════════════ */
+function openLightbox(cardId) {
+  const info = CARD_REGISTRY[cardId] || { name: cardId, type: "—", pack: "—", rarity: "—" };
+  const url  = getCardArt(cardId);
+  const lb   = document.getElementById("card-lightbox");
+  const display = document.getElementById("lb-card-display");
+  const nameEl  = document.getElementById("lb-card-name");
+  const metaEl  = document.getElementById("lb-card-meta");
+
+  display.innerHTML = "";
+  nameEl.textContent = info.name;
+  metaEl.textContent = `${info.type} · ${info.pack} · ${info.rarity}`;
+
+  if (url) {
+    const img = document.createElement("img");
+    img.className = "lb-card-img";
+    img.alt = info.name;
+    img.loading = "eager";
+    img.onerror = function() {
+      const back = document.createElement("div");
+      back.className = "lb-card-back";
+      back.textContent = "🃏";
+      this.replaceWith(back);
+    };
+    img.src = url;
+    display.appendChild(img);
+  } else {
+    const back = document.createElement("div");
+    back.className = "lb-card-back";
+    back.textContent = "🃏";
+    display.appendChild(back);
+  }
+
+  lb.classList.add("open");
+  document.body.style.overflow = "hidden";
+}
+
+function closeLightbox() {
+  document.getElementById("card-lightbox").classList.remove("open");
+  document.body.style.overflow = "";
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   STORE — STATE MANAGEMENT
+══════════════════════════════════════════════════════════════ */
+const Store = {
+  activeView:    "tier-list",
+  activeFilter:  "All",  // shared across both views
+
+  setView(view) {
+    this.activeView = view;
+    this.render();
+    this.syncURL();
+  },
+
+  setFilter(type) {
+    this.activeFilter = type;
+    this.renderDecks();
+  },
+
+  syncURL() {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      params.set("view", this.activeView);
+      if (this.activeFilter !== "All") params.set("type", this.activeFilter);
+      else params.delete("type");
+      history.replaceState(null, "", "?" + params.toString());
+    } catch(e) { /* sandboxed or file:// — silently skip URL sync */ }
+  },
+
+  loadFromURL() {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("view"))  this.activeView   = params.get("view");
+      if (params.get("type"))  this.activeFilter = params.get("type");
+      const deckId = params.get("deck");
+      if (deckId) {
+        const deck = META_SNAPSHOT.find(d => d.id === deckId);
+        if (deck) setTimeout(() => openModal(deck), 200);
+      }
+    } catch(e) { /* sandboxed — skip */ }
+  },
+
+  render() {
+    // Switch view panels
+    document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
+    const target = document.getElementById(`view-${this.activeView}`);
+    if (target) target.classList.add("active");
+
+    // Sync nav tabs
+    document.querySelectorAll(".nav-tab").forEach(t => {
+      t.classList.toggle("active", t.dataset.view === this.activeView);
+    });
+
+    this.renderDecks();
+    if (this.activeView === "meta-stats") renderStats();
+  },
+
+  renderDecks() {
+    renderTierList();
+    renderAllDecks();
+    syncFilterChips();
+  }
+};
+
+/* ══════════════════════════════════════════════════════════════
+   CARD COMPONENT FACTORY
+══════════════════════════════════════════════════════════════ */
+function buildDeckCard(deck) {
+  const tpl = document.getElementById("tpl-deck-card");
+  const el  = tpl.content.cloneNode(true);
+  const root = el.querySelector(".deck-card");
+
+  root.classList.add(`${deck.tier.toLowerCase()}-tier`);
+  root.dataset.deckId = deck.id;
+
+  // Strip images (first 5 Pokémon cards)
+  const pokemonCards = deck.cards
+    .filter(c => {
+      const reg = CARD_REGISTRY[c.id];
+      return reg && reg.type !== "Trainer";
+    })
+    .slice(0, 5);
+
+  const stripContainer = root.querySelector(".deck-strip-cards");
+  pokemonCards.forEach(c => {
+    const url = getCardArt(c.id);
+    if (url) {
+      // Append to DOM first so parentNode is always valid when onerror fires
+      const img = makeSafeImg(url, CARD_REGISTRY[c.id]?.name || c.id, "strip-card-img");
+      stripContainer.appendChild(img);
+    } else {
+      const ph = document.createElement("div");
+      ph.className = "card-back";
+      ph.textContent = "🃏";
+      stripContainer.appendChild(ph);
+    }
+  });
+
+  // Tier overlay
+  const tierOv = root.querySelector(".deck-tier-overlay");
+  tierOv.textContent = deck.tier + "-Tier";
+  tierOv.classList.add(deck.tier.toLowerCase());
+
+  // Body
+  root.querySelector(".deck-name").textContent = deck.name;
+
+  const typeBadge = root.querySelector(".type-badge");
+  typeBadge.textContent = deck.type;
+  typeBadge.classList.add(`type-${deck.type.replace(/\s/g,'')}`);
+
+  root.querySelector(".win-val").textContent = deck.winRate + "%";
+  root.querySelector(".pop-val").textContent = deck.popularity + "%";
+  root.querySelector(".cards-val").textContent = deck.cards.reduce((s,c)=>s+c.qty,0);
+
+  root.querySelector(".deck-desc").textContent = deck.description;
+
+  const fill = root.querySelector(".deck-winrate-fill");
+  fill.classList.add(deck.tier.toLowerCase());
+  // Set width via timeout for CSS animation
+  setTimeout(() => { fill.style.width = `${(deck.winRate / 80) * 100}%`; }, 80);
+
+  root.querySelector(".deck-card-count").textContent =
+    deck.cards.reduce((s,c)=>s+c.qty,0) + " cards";
+
+  root.addEventListener("click", () => openModal(deck));
+
+  return root;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   RENDER — TIER LIST
+══════════════════════════════════════════════════════════════ */
+const TIER_META = {
+  S: { desc: "Dominant — consistent tournament winners" },
+  A: { desc: "Strong — highly competitive, viable at all levels" },
+  B: { desc: "Solid — good in the right hands or matchup" },
+  C: { desc: "Fringe — playable but outclassed by the current field" },
+};
+
+function renderTierList() {
+  const container = document.getElementById("tier-list-container");
+  container.innerHTML = "";
+
+  const filter = Store.activeFilter;
+  const tiers = ["S","A","B","C"];
+
+  tiers.forEach(tier => {
+    const decks = META_SNAPSHOT.filter(d =>
+      d.tier === tier && (filter === "All" || d.type === filter)
+    );
+    if (decks.length === 0) return;
+
+    const section = document.createElement("div");
+    section.className = "tier-section";
+
+    const labelRow = document.createElement("div");
+    labelRow.className = "tier-label-row";
+    labelRow.innerHTML = `
+      <div class="tier-badge ${tier.toLowerCase()}">${tier}</div>
+      <div style="display:flex;flex-direction:column;gap:2px">
+        <div style="font-family:var(--font-display);font-size:13px;font-weight:700;color:var(--text-primary)">${tier}-Tier</div>
+        <div class="tier-desc">${TIER_META[tier].desc}</div>
+      </div>
+      <div class="tier-rule ${tier.toLowerCase()}"></div>
+    `;
+    section.appendChild(labelRow);
+
+    const grid = document.createElement("div");
+    grid.className = "deck-grid";
+    decks.forEach(d => grid.appendChild(buildDeckCard(d)));
+    section.appendChild(grid);
+    container.appendChild(section);
+  });
+
+  // Nothing matched filter
+  if (container.innerHTML === "") {
+    container.innerHTML = `
+      <div class="empty-state">
+        No ${filter} decks found in the current meta snapshot.
+      </div>`;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   RENDER — ALL DECKS
+══════════════════════════════════════════════════════════════ */
+function renderAllDecks() {
+  const grid = document.getElementById("all-decks-grid");
+  grid.innerHTML = "";
+
+  const filter = Store.activeFilter;
+  const sorted = [...META_SNAPSHOT]
+    .filter(d => filter === "All" || d.type === filter)
+    .sort((a,b) => b.winRate - a.winRate);
+
+  if (sorted.length === 0) {
+    grid.innerHTML = `<div class="empty-state">No ${filter} decks found.</div>`;
+    return;
+  }
+
+  sorted.forEach(d => grid.appendChild(buildDeckCard(d)));
+}
+
+/* ══════════════════════════════════════════════════════════════
+   RENDER — META STATS
+══════════════════════════════════════════════════════════════ */
+function renderStats() {
+  const summaryEl = document.getElementById("stats-summary");
+  const breakdownEl = document.getElementById("type-breakdown");
+
+  if (summaryEl.dataset.rendered) return;
+  summaryEl.dataset.rendered = "1";
+
+  const totalDecks = META_SNAPSHOT.length;
+  const avgWin = (META_SNAPSHOT.reduce((s,d)=>s+d.winRate,0)/totalDecks).toFixed(1);
+  const sTier = META_SNAPSHOT.filter(d=>d.tier==="S").length;
+  const uniqueTypes = [...new Set(META_SNAPSHOT.map(d=>d.type))].length;
+
+  const statCards = [
+    { val: totalDecks, key: "Tracked Decks" },
+    { val: avgWin + "%", key: "Avg Win Rate" },
+    { val: sTier, key: "S-Tier Decks" },
+    { val: uniqueTypes, key: "Active Types" },
+  ];
+
+  summaryEl.innerHTML = statCards.map(s => `
+    <div class="stat-card">
+      <div class="stat-card-val">${s.val}</div>
+      <div class="stat-card-key">${s.key}</div>
+    </div>
+  `).join("");
+
+  // Type breakdown
+  const typeCounts = {};
+  META_SNAPSHOT.forEach(d => {
+    typeCounts[d.type] = (typeCounts[d.type] || 0) + 1;
+  });
+  const sorted = Object.entries(typeCounts).sort((a,b)=>b[1]-a[1]);
+  const max = sorted[0][1];
+
+  const TYPE_COLORS = {
+    Dark: "#7c3aed", Fire: "#ef4444", Grass: "#16a34a",
+    Water: "#2563eb", Lightning: "#ca8a04", Psychic: "#db2777",
+    Fighting: "#92400e", Dragon: "#6366f1", Colorless: "#9ca3af",
+    Metal: "#6b7280", Trainer: "#4b5563",
+  };
+
+  breakdownEl.innerHTML = sorted.map(([type, count]) => {
+    const pct = ((count / totalDecks) * 100).toFixed(0);
+    const barW = ((count / max) * 100).toFixed(0);
+    const color = TYPE_COLORS[type] || "#4fd1ff";
+    return `
+      <div class="type-row">
+        <div class="type-row-name">${type}</div>
+        <div class="type-row-bar">
+          <div class="type-row-fill" style="width:0%;background:${color}"
+               data-target="${barW}"></div>
+        </div>
+        <div class="type-row-pct">${pct}%</div>
+      </div>`;
+  }).join("");
+
+  setTimeout(() => {
+    breakdownEl.querySelectorAll(".type-row-fill").forEach(el => {
+      el.style.width = el.dataset.target + "%";
+    });
+  }, 100);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   MODAL HELPERS — hoisted so they're not redeclared each call
+══════════════════════════════════════════════════════════════ */
+const TYPE_COLORS_SOFT = {
+  Dark:"rgba(124,58,237,0.2)",    Fire:"rgba(239,68,68,0.15)",
+  Grass:"rgba(22,163,74,0.15)",   Water:"rgba(37,99,235,0.15)",
+  Lightning:"rgba(202,138,4,0.15)",Psychic:"rgba(219,39,119,0.15)",
+  Fighting:"rgba(146,64,14,0.2)", Dragon:"rgba(99,102,241,0.15)",
+  Colorless:"rgba(156,163,175,0.1)",Metal:"rgba(107,114,128,0.15)",
+};
+const TYPE_COLORS_TEXT = {
+  Dark:"#c4b5fd",   Fire:"#fca5a5",   Grass:"#86efac",
+  Water:"#93c5fd",  Lightning:"#fde047", Psychic:"#f9a8d4",
+  Fighting:"#d97706",Dragon:"#a5b4fc", Colorless:"#e5e7eb",
+  Metal:"#d1d5db",
+};
+
+function makeTagList(types, label, cls) {
+  const col = document.createElement("div");
+  col.innerHTML = `<div class="matchup-col-title ${cls}">${label}</div><div class="matchup-tags"></div>`;
+  const tags = col.querySelector(".matchup-tags");
+  (types || []).forEach(t => {
+    const span = document.createElement("span");
+    span.className = "matchup-tag";
+    span.textContent = t;
+    span.style.background = TYPE_COLORS_SOFT[t] || "rgba(255,255,255,0.06)";
+    span.style.color       = TYPE_COLORS_TEXT[t] || "#e8f0ff";
+    span.style.border      = `1px solid ${(TYPE_COLORS_TEXT[t] || "#e8f0ff")}33`;
+    tags.appendChild(span);
+  });
+  return col;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   MODAL — OPEN / CLOSE
+══════════════════════════════════════════════════════════════ */
+function openModal(deck) {
+  const overlay  = document.getElementById("modal-overlay");
+  const tierBadge = document.getElementById("modal-tier-badge");
+  const deckName  = document.getElementById("modal-deck-name");
+  const deckMeta  = document.getElementById("modal-deck-meta");
+  const body      = document.getElementById("modal-body");
+
+  // ── Show overlay FIRST before any code that could throw ──
+  overlay.classList.add("open");
+  document.body.style.overflow = "hidden";
+
+  // Header
+  tierBadge.textContent = deck.tier;
+  tierBadge.className   = `modal-tier-badge tier-badge ${deck.tier.toLowerCase()}`;
+  deckName.textContent  = deck.name;
+  deckMeta.innerHTML = `
+    <span class="type-badge type-${deck.type.replace(/\s/g,'')}">${deck.type}</span>
+    <span class="modal-stat-chip win-rate">⬆ ${deck.winRate}% WR</span>
+    <span class="modal-stat-chip pop">👥 ${deck.popularity}% Pop</span>
+    <span class="modal-stat-chip">${deck.tier}-Tier</span>
+  `;
+
+  // Clear body
+  const totalCards = deck.cards.reduce((s,c) => s + c.qty, 0);
+  body.innerHTML = "";
+
+  // ─ Card Art Grid ─────────────────────────────────────────
+  const gridTitle = document.createElement("div");
+  gridTitle.className = "modal-section-title";
+  gridTitle.textContent = `Card Art  (${totalCards} cards)`;
+  body.appendChild(gridTitle);
+
+  const cardGrid = document.createElement("div");
+  cardGrid.className = "modal-card-grid";
+
+  deck.cards.forEach(entry => {
+    const info = CARD_REGISTRY[entry.id];
+    if (!info) {
+      console.warn("Card not found in registry:", entry.id);
+      return;
+    }
+
+    const item = document.createElement("div");
+    item.className = "modal-card-item";
+
+    const wrap = document.createElement("div");
+    wrap.className = "modal-card-img-wrap";
+    wrap.dataset.tip = `${info.name} ×${entry.qty}`;
+    wrap.title = `Click to enlarge: ${info.name}`;
+    wrap.addEventListener("click", () => openLightbox(entry.id));
+
+    // Append wrap to item first so the full DOM chain exists before src fires
+    item.appendChild(wrap);
+
+    const url = getCardArt(entry.id);
+    if (url) {
+      // Use makeSafeImg — img is appended to wrap before src is set
+      const img = makeSafeImg(url, info.name, "modal-card-img");
+      wrap.appendChild(img);
+    } else {
+      const ph = document.createElement("div");
+      ph.className = "card-back";
+      ph.textContent = "🃏";
+      wrap.appendChild(ph);
+    }
+
+    // Qty badge sits OUTSIDE the img element so handleImgError (replaceWith) can't touch it
+    const qtyBadge = document.createElement("div");
+    qtyBadge.className = "modal-card-qty";
+    qtyBadge.textContent = "×" + entry.qty;
+    wrap.appendChild(qtyBadge);
+
+    const nameEl = document.createElement("div");
+    nameEl.className = "modal-card-name";
+    nameEl.textContent = info.name;
+    item.appendChild(nameEl);
+
+    cardGrid.appendChild(item);
+  });
+  body.appendChild(cardGrid);
+
+  // ─ Decklist Table ─────────────────────────────────────────
+  const listTitle = document.createElement("div");
+  listTitle.className = "modal-section-title";
+  listTitle.textContent = "Full Decklist";
+  body.appendChild(listTitle);
+
+  const table = document.createElement("table");
+  table.className = "decklist-table";
+  table.innerHTML = `<thead><tr>
+    <th>Qty</th><th>Card</th><th>Type</th><th>Set</th><th>Rarity</th>
+  </tr></thead>`;
+
+  const tbody = document.createElement("tbody");
+  deck.cards.forEach(entry => {
+    const info = CARD_REGISTRY[entry.id] || { name: entry.id, type: "—", pack: "—", rarity: "—" };
+    const tr = document.createElement("tr");
+    const safeType = (info.type || "").replace(/\s/g, "");
+    tr.innerHTML = `
+      <td class="qty">${entry.qty}</td>
+      <td class="name">${info.name}</td>
+      <td><span class="type-badge type-${safeType}">${info.type}</span></td>
+      <td style="color:var(--text-muted);font-size:12px">${info.pack}</td>
+      <td style="color:var(--text-muted);font-size:12px;font-family:var(--font-display)">${info.rarity || "—"}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  body.appendChild(table);
+
+  // ─ Matchup Profile ────────────────────────────────────────
+  const matchTitle = document.createElement("div");
+  matchTitle.className = "modal-section-title";
+  matchTitle.style.marginTop = "24px";
+  matchTitle.textContent = "Matchup Profile";
+  body.appendChild(matchTitle);
+
+  const matchGrid = document.createElement("div");
+  matchGrid.className = "matchup-grid";
+  matchGrid.appendChild(makeTagList(deck.strengths, "✓ Favourable", "good"));
+  matchGrid.appendChild(makeTagList(deck.weaknesses, "✗ Unfavourable", "bad"));
+  body.appendChild(matchGrid);
+
+  // ─ Strategy Notes ─────────────────────────────────────────
+  const descEl = document.createElement("p");
+  descEl.style.cssText = "margin-top:20px;font-size:13px;color:var(--text-secondary);line-height:1.7;font-weight:300";
+  descEl.textContent = deck.description;
+  body.appendChild(descEl);
+
+  // ─ Share URL ──────────────────────────────────────────────
+  const shareTitle = document.createElement("div");
+  shareTitle.className = "modal-section-title";
+  shareTitle.style.marginTop = "24px";
+  shareTitle.textContent = "Share Decklist";
+  body.appendChild(shareTitle);
+
+  // Build share URL safely — falls back to a placeholder if location is restricted
+  let shareUrl = "";
+  try { shareUrl = `${location.origin}${location.pathname}?view=${Store.activeView}&deck=${deck.id}`; }
+  catch(e) { shareUrl = `?view=${Store.activeView}&deck=${deck.id}`; }
+
+  const shareBar = document.createElement("div");
+  shareBar.className = "share-bar";
+  shareBar.innerHTML = `
+    <input class="share-url" id="share-url-input" value="${shareUrl}" readonly>
+    <button class="share-copy-btn" id="copy-btn">Copy</button>
+  `;
+  body.appendChild(shareBar);
+
+  shareBar.querySelector("#copy-btn").addEventListener("click", function() {
+    const input = shareBar.querySelector("#share-url-input");
+    input.select();
+    // Try modern clipboard API first, fall back to execCommand
+    const btn = this;
+    const markCopied = () => {
+      btn.textContent = "Copied!";
+      btn.classList.add("copied");
+      setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 2000);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(shareUrl).then(markCopied).catch(() => {
+        try { document.execCommand("copy"); markCopied(); } catch(e) {}
+      });
+    } else {
+      try { document.execCommand("copy"); markCopied(); } catch(e) {}
+    }
+  });
+
+  // Update URL state — wrapped so sandboxed iframes don't break the modal
+  try {
+    const params = new URLSearchParams(window.location.search);
+    params.set("deck", deck.id);
+    history.replaceState(null, "", "?" + params.toString());
+  } catch(e) { /* sandboxed — skip */ }
+}
+
+function closeModal() {
+  document.getElementById("modal-overlay").classList.remove("open");
+  document.body.style.overflow = "";
+  try {
+    const params = new URLSearchParams(window.location.search);
+    params.delete("deck");
+    const qs = params.toString();
+    history.replaceState(null, "", qs ? "?" + qs : location.pathname);
+  } catch(e) { /* sandboxed — skip */ }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   FILTER CHIP SYNC
+══════════════════════════════════════════════════════════════ */
+function syncFilterChips() {
+  document.querySelectorAll(".filter-chip").forEach(chip => {
+    chip.classList.toggle("active", chip.dataset.type === Store.activeFilter);
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════
+   EVENT LISTENERS
+══════════════════════════════════════════════════════════════ */
+document.addEventListener("DOMContentLoaded", () => {
+  // Nav tabs
+  document.querySelectorAll(".nav-tab").forEach(btn => {
+    btn.addEventListener("click", () => Store.setView(btn.dataset.view));
+  });
+
+  // Filter bars (delegated)
+  ["tier-filter-bar","all-decks-filter-bar"].forEach(id => {
+    document.getElementById(id)?.addEventListener("click", e => {
+      const chip = e.target.closest(".filter-chip");
+      if (chip) Store.setFilter(chip.dataset.type);
+    });
+  });
+
+  // Modal close
+  document.getElementById("modal-close").addEventListener("click", closeModal);
+  document.getElementById("modal-overlay").addEventListener("click", e => {
+    if (e.target === e.currentTarget) closeModal();
+  });
+
+  // Keyboard esc
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape") {
+      if (document.getElementById("card-lightbox").classList.contains("open")) {
+        closeLightbox();
+      } else {
+        closeModal();
+      }
+    }
+  });
+
+  // Card lightbox close on click
+  document.getElementById("card-lightbox").addEventListener("click", closeLightbox);
+
+  // Boot
+  Store.loadFromURL();
+  Store.render();
+});
+</script>
+
+<!-- Card Lightbox Overlay -->
+<div id="card-lightbox" role="dialog" aria-modal="true" aria-label="Card detail">
+  <div class="lb-inner" onclick="event.stopPropagation()">
+    <div id="lb-card-display"></div>
+    <div class="lb-info">
+      <div class="lb-name" id="lb-card-name"></div>
+      <div class="lb-meta" id="lb-card-meta"></div>
+      <div class="lb-close-hint">Click anywhere to close</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
