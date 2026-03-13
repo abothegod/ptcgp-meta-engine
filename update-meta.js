@@ -211,8 +211,23 @@ const KNOWN_CARDS = {
   "A3-034":  { name: "Oricorio",            type: "Fire",      pack: "Celestial Guardians", rarity: "U"  },
   // A3b Eevee Grove
   "A3b-057": { name: "Snorlax ex",          type: "Colorless", pack: "Eevee Grove",         rarity: "EX" },
+  // A3 Celestial Guardians
+  "A3-074":  { name: "Shuppet",             type: "Psychic",   pack: "Celestial Guardians", rarity: "C"  },
+  "A3-075":  { name: "Banette",             type: "Psychic",   pack: "Celestial Guardians", rarity: "U"  },
   // A4a Secluded Springs
   "A4a-020": { name: "Suicune ex",          type: "Water",     pack: "Secluded Springs",    rarity: "EX" },
+  // B1 Mega Rising (additional)
+  "B1-092":  { name: "Joltik",              type: "Lightning", pack: "Mega Rising",         rarity: "C"  },
+  "B1-093":  { name: "Galvantula",          type: "Lightning", pack: "Mega Rising",         rarity: "U"  },
+  "B1-304":  { name: "Zeraora",             type: "Lightning", pack: "Mega Rising",         rarity: "EX" },
+  // B1a Crimson Blaze (additional)
+  "B1a-096": { name: "Type: Null",          type: "Colorless", pack: "Crimson Blaze",       rarity: "EX" },
+  // B2a Paldean Wonders
+  "B2a-034": { name: "Frigibax",            type: "Water",     pack: "Paldean Wonders",     rarity: "C"  },
+  "B2a-035": { name: "Arctibax",            type: "Water",     pack: "Paldean Wonders",     rarity: "U"  },
+  "B2a-036": { name: "Baxcalibur",          type: "Water",     pack: "Paldean Wonders",     rarity: "R"  },
+  "B2a-041": { name: "Tadbulb",             type: "Lightning", pack: "Paldean Wonders",     rarity: "C"  },
+  "B2a-042": { name: "Bellibolt ex",        type: "Lightning", pack: "Paldean Wonders",     rarity: "EX" },
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -283,6 +298,24 @@ function buildOptimalDeck(coreIds, type) {
     addCard(other.id, Math.min(2, 20 - totalQty()));
   }
 
+  // Generic filler pool — add in order until deck reaches 20
+  // These are universally playable cards with no type restriction
+  const FILLER_POOL = [
+    "P-A-006",  // Red Card  — disruptive in any deck
+    "A1-223",   // Giovanni  — +10 damage
+    "A1-220",   // Misty     — energy acceleration
+    "B1-109",   // Chingling — bench disruption
+    "A3-034",   // Oricorio  — damage chip
+    "A1-225",   // Sabrina   — retreat / switch
+    "B2-191",   // Sightseer — draw
+    "B1-225",   // Copycat   — draw
+  ];
+  for (const fillId of FILLER_POOL) {
+    if (totalQty() >= 20) break;
+    const have = deck[fillId] || 0;
+    if (have < 2) addCard(fillId, Math.min(2 - have, 20 - totalQty()));
+  }
+
   const result = Object.entries(deck)
     .filter(([id]) => KNOWN_CARDS[id])
     .map(([id, qty]) => ({ id, qty }));
@@ -292,7 +325,7 @@ function buildOptimalDeck(coreIds, type) {
     log(`WARN: Deck for type ${type} has ${total} cards, not 20.`, 'yellow');
   }
 
-  return result.slice(0, 10);
+  return result;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -426,8 +459,11 @@ function detectEnergyTypes(name) {
     'Mimikyu': 'Psychic', 'Gourgeist': 'Psychic', 'Chandelure': 'Psychic',
     'Meloetta': 'Psychic',
     'Magnezone': 'Lightning', 'Jolteon': 'Lightning', 'Raichu': 'Lightning',
+    'Galvantula': 'Lightning', 'Zeraora': 'Lightning', 'Bellibolt': 'Lightning',
     'Charizard': 'Fire', 'Blaziken': 'Fire', 'Entei': 'Fire',
-    'Altaria': 'Colorless', 'Kangaskhan': 'Colorless', 'Snorlax': 'Colorless',
+    'Altaria': 'Colorless', 'Kangaskhan': 'Colorless', 'Snorlax': 'Colorless', 'Silvally': 'Colorless',
+    'Baxcalibur': 'Water',
+    'Banette': 'Psychic',
     'Leafeon': 'Grass', 'Venusaur': 'Grass',
   };
   const types = new Set();
@@ -484,7 +520,7 @@ function buildCoreCards(name) {
   const cores = [];
   if (name.includes('Hydreigon'))          cores.push('B1-155','B1-156','B1-157');
   if (name.includes('Greninja ex'))        cores.push('B1-071','B1-072','B1-073');
-  if (name.includes('Greninja') && !name.includes('ex')) cores.push('A1-087','A1-088','A1-089');
+  if (name.includes('Greninja') && !name.includes('Greninja ex')) cores.push('A1-087','A1-088','A1-089');
   if (name.includes('Altaria'))            cores.push('B1-196','B1-197','B1-102');
   if (name.includes('Gourgeist') || name.includes('Houndstone')) {
     cores.push('B2-071','B2-072','B2a-001','B2a-002');
@@ -507,6 +543,12 @@ function buildCoreCards(name) {
   if (name.includes('Gardevoir'))          cores.push('A1-130','A1-131','A1-132','B2-066');
   if (name.includes('Mewtwo'))             cores.push('A1-129');
   if (name.includes('Snorlax'))            cores.push('A3b-057');
+  if (name.includes('Galvantula'))         cores.push('B1-092','B1-093');
+  if (name.includes('Zeraora'))            cores.push('B1-304');
+  if (name.includes('Bellibolt'))          cores.push('B2a-041','B2a-042');
+  if (name.includes('Baxcalibur'))         cores.push('B2a-034','B2a-035','B2a-036');
+  if (name.includes('Banette'))            cores.push('A3-074','A3-075');
+  if (name.includes('Silvally'))           cores.push('B1a-096','B1a-097');
   return [...new Set(cores)].filter(id => KNOWN_CARDS[id]);
 }
 
