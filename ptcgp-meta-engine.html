@@ -189,9 +189,10 @@ body::after {
 }
 
 .nav-tab:hover {
-  color: var(--cyan);
-  border-color: var(--border-mid);
-  background: var(--cyan-deep);
+  color: #fff;
+  border-color: var(--cyan);
+  background: rgba(79,209,255,0.22);
+  box-shadow: 0 0 12px rgba(79,209,255,0.18);
 }
 
 .nav-tab.active {
@@ -346,8 +347,9 @@ body::after {
 }
 
 .filter-chip:hover {
-  border-color: var(--border-mid);
-  color: var(--text-primary);
+  border-color: var(--cyan);
+  color: #fff;
+  background: rgba(79,209,255,0.16);
 }
 
 .filter-chip.active {
@@ -1644,56 +1646,115 @@ body::after {
 
 /* Card picker result list */
 .picker-results {
-  max-height: 252px;
+  max-height: 280px;
   overflow-y: auto;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-md);
   background: var(--bg-deep);
 }
-.picker-results::-webkit-scrollbar { width: 3px; }
+.picker-results:empty { display: none; }
+.picker-results::-webkit-scrollbar { width: 4px; }
 .picker-results::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 2px; }
 
 .picker-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 36px 1fr auto auto;
   align-items: center;
   gap: 8px;
-  padding: 5px 10px;
+  padding: 6px 10px 6px 6px;
   cursor: pointer;
   transition: background var(--transition);
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid rgba(79,209,255,0.06);
+  user-select: none;
 }
 .picker-row:last-child { border-bottom: none; }
-.picker-row:hover { background: rgba(79,209,255,0.06); }
-.picker-row.maxed   { opacity: 0.45; cursor: default; pointer-events: none; }
-.picker-row.disabled { opacity: 0.3;  cursor: not-allowed; pointer-events: none; }
+.picker-row:hover { background: rgba(79,209,255,0.1); }
+.picker-row:hover .picker-add-icon { opacity: 1; color: #fff; background: rgba(79,209,255,0.5); }
+.picker-row.maxed  { opacity: 0.38; cursor: not-allowed; pointer-events: none; }
+.picker-row.full   { opacity: 0.38; cursor: not-allowed; pointer-events: none; }
 
 .picker-thumb {
-  width: 30px;
-  height: 42px;
+  width: 36px;
+  height: 50px;
   object-fit: cover;
-  border-radius: 3px;
+  border-radius: 4px;
   border: 1px solid var(--border-subtle);
   flex-shrink: 0;
   display: block;
 }
+.picker-card-info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
 .picker-card-name {
-  flex: 1;
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.picker-card-qty {
+.picker-card-sub {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.picker-in-deck {
   font-family: var(--font-display);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
-  color: var(--cyan);
-  width: 22px;
-  text-align: right;
+  min-width: 28px;
+  text-align: center;
+  padding: 2px 5px;
+  border-radius: 8px;
   flex-shrink: 0;
 }
+.picker-in-deck.none  { color: var(--text-muted);   background: transparent; }
+.picker-in-deck.one   { color: var(--gold);          background: rgba(251,191,36,0.12); }
+.picker-in-deck.maxed { color: var(--green);         background: rgba(74,222,128,0.12); }
+.picker-add-icon {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--cyan);
+  background: rgba(79,209,255,0.1);
+  flex-shrink: 0;
+  transition: all var(--transition);
+  line-height: 1;
+}
+
+/* Deck list entries */
+.deck-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.deck-list::-webkit-scrollbar { width: 4px; }
+.deck-list::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 2px; }
+
+.deck-entry {
+  display: grid;
+  grid-template-columns: 40px 1fr auto auto auto auto;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px 5px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-deep);
+  border: 1px solid var(--border-subtle);
+  transition: border-color var(--transition), background var(--transition);
+}
+.deck-entry:hover { background: rgba(79,209,255,0.05); border-color: var(--border-mid); }
 
 /* Deck list entries */
 .deck-list {
@@ -1718,17 +1779,17 @@ body::after {
 }
 .deck-entry:hover { background: rgba(79,209,255,0.04); }
 .deck-entry-thumb {
-  width: 26px;
-  height: 36px;
+  width: 40px;
+  height: 56px;
   object-fit: cover;
-  border-radius: 3px;
+  border-radius: 4px;
   flex-shrink: 0;
   display: block;
+  border: 1px solid var(--border-subtle);
 }
 .deck-entry-name {
-  flex: 1;
-  font-size: 11px;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -1737,21 +1798,21 @@ body::after {
 }
 .deck-entry-qty {
   font-family: var(--font-display);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
-  color: var(--text-muted);
-  width: 22px;
+  color: var(--cyan);
+  width: 26px;
   text-align: center;
   flex-shrink: 0;
 }
 .deck-entry-btn {
-  width: 20px;
-  height: 20px;
-  border-radius: 4px;
-  border: 1px solid var(--border-subtle);
-  background: transparent;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid var(--border-mid);
+  background: var(--bg-elevated);
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1;
   cursor: pointer;
   display: flex;
@@ -1760,13 +1821,16 @@ body::after {
   transition: all var(--transition);
   flex-shrink: 0;
   padding: 0;
+  font-weight: 700;
 }
 .deck-entry-btn:hover:not(:disabled) {
-  border-color: var(--border-mid);
-  color: var(--text-primary);
+  background: rgba(79,209,255,0.2);
+  border-color: var(--cyan);
+  color: #fff;
 }
 .deck-entry-btn.remove:hover:not(:disabled) {
-  border-color: rgba(248,113,113,0.45);
+  background: rgba(248,113,113,0.2);
+  border-color: var(--red);
   color: var(--red);
 }
 .deck-entry-btn:disabled { opacity: 0.3; cursor: not-allowed; }
@@ -1790,10 +1854,11 @@ body::after {
 .deck-count-num.err  { color: var(--red); }
 
 .deck-progress-track {
-  height: 5px;
-  background: rgba(255,255,255,0.06);
-  border-radius: 3px;
+  height: 10px;
+  background: rgba(255,255,255,0.07);
+  border-radius: 5px;
   overflow: hidden;
+  border: 1px solid var(--border-subtle);
 }
 .deck-progress-fill {
   height: 100%;
@@ -1802,11 +1867,12 @@ body::after {
 }
 
 .type-dist-bar {
-  height: 7px;
-  border-radius: 4px;
+  height: 10px;
+  border-radius: 5px;
   overflow: hidden;
   display: flex;
   gap: 1px;
+  border: 1px solid var(--border-subtle);
 }
 .type-dist-seg {
   height: 100%;
@@ -1848,7 +1914,7 @@ body::after {
   color: var(--cyan);
   white-space: nowrap;
 }
-.builder-btn:hover { background: var(--cyan-deep); box-shadow: 0 0 14px var(--cyan-glow); }
+.builder-btn:hover { background: rgba(79,209,255,0.2); border-color: var(--cyan); color: #fff; box-shadow: 0 0 14px var(--cyan-glow); }
 .builder-btn.primary {
   background: var(--cyan);
   color: var(--bg-void);
@@ -1917,11 +1983,11 @@ body::after {
 }
 .saved-deck-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .saved-deck-btn.edit     { border: 1px solid var(--border-mid);                  color: var(--cyan);   }
-.saved-deck-btn.edit:hover  { background: var(--cyan-deep); }
+.saved-deck-btn.edit:hover  { background: rgba(79,209,255,0.18); color: #fff; border-color: var(--cyan); }
 .saved-deck-btn.simulate { border: 1px solid rgba(167,139,250,0.3);             color: var(--purple); }
-.saved-deck-btn.simulate:hover:not(:disabled) { background: rgba(167,139,250,0.08); }
+.saved-deck-btn.simulate:hover:not(:disabled) { background: rgba(167,139,250,0.22); color: #fff; border-color: var(--purple); }
 .saved-deck-btn.delete   { border: 1px solid rgba(248,113,113,0.3);             color: var(--red);    }
-.saved-deck-btn.delete:hover { background: rgba(248,113,113,0.1); }
+.saved-deck-btn.delete:hover { background: rgba(248,113,113,0.2); color: #fff; border-color: var(--red); }
 
 /* Empty state */
 .saved-empty {
@@ -2171,12 +2237,12 @@ body::after {
   transition: all var(--transition);
   white-space: nowrap;
 }
-.sim-btn:hover { border-color: var(--cyan); color: var(--cyan); background: var(--cyan-deep); }
+.sim-btn:hover { border-color: var(--cyan); color: #fff; background: rgba(79,209,255,0.2); }
 .sim-btn.primary {
   border-color: rgba(167,139,250,0.4);
   color: var(--purple);
 }
-.sim-btn.primary:hover { background: rgba(167,139,250,0.08); }
+.sim-btn.primary:hover { background: rgba(167,139,250,0.22); color: #fff; border-color: var(--purple); }
 
 /* Run locally steps */
 .sim-steps {
@@ -2364,8 +2430,9 @@ a.sim-step-link:hover { text-decoration: underline; }
   background: var(--cyan-deep);
 }
 .tier-sort-btn:not(.active):hover {
-  border-color: var(--border-subtle);
-  color: var(--text-secondary);
+  border-color: var(--cyan);
+  color: #fff;
+  background: rgba(79,209,255,0.16);
 }
 
 /* ── Image shimmer skeleton ──────────────────────────────────── */
@@ -7417,38 +7484,61 @@ const DeckBuilder = (() => {
     if (!el) return;
     const cards = _getPickerFiltered();
     if (!cards.length) {
-      el.innerHTML = '<div style="padding:10px;color:var(--text-muted);font-size:13px">No cards found.</div>';
+      el.innerHTML = '<div style="padding:12px 14px;color:var(--text-muted);font-size:13px">No cards found. Try a different search.</div>';
       return;
     }
+    const totalCards = _totalCards();
     el.innerHTML = '';
     cards.forEach(card => {
-      const row = document.createElement('div');
-      row.className = 'picker-row';
+      const inDeck  = (_currentDeck?.cards || []).find(e => e.id === card.id)?.qty || 0;
+      const isMaxed = inDeck >= 2;
+      const isFull  = totalCards >= 20 && inDeck === 0;
 
+      const row = document.createElement('div');
+      row.className = 'picker-row' + (isMaxed ? ' maxed' : isFull ? ' full' : '');
+
+      // Thumbnail
       const thumb = document.createElement('img');
       thumb.className = 'picker-thumb';
-      thumb.src = card.imageUrl || '';
-      thumb.alt = card.name;
+      thumb.src     = card.imageUrl || '';
+      thumb.alt     = card.name;
       thumb.loading = 'eager';
 
-      const nameEl = document.createElement('span');
-      nameEl.className = 'picker-card-name';
+      // Name + sub info
+      const info = document.createElement('div');
+      info.className = 'picker-card-info';
+      const nameEl = document.createElement('div');
+      nameEl.className  = 'picker-card-name';
       nameEl.textContent = card.name;
+      const subEl = document.createElement('div');
+      subEl.className  = 'picker-card-sub';
+      subEl.textContent = card.setCode + ' · ' + (card.type || '');
+      info.appendChild(nameEl);
+      info.appendChild(subEl);
 
-      const meta = document.createElement('span');
-      meta.className = 'picker-card-qty';
-      meta.textContent = card.setCode;
+      // In-deck count badge
+      const badge = document.createElement('span');
+      badge.className = 'picker-in-deck ' + (inDeck === 0 ? 'none' : inDeck === 1 ? 'one' : 'maxed');
+      badge.textContent = inDeck === 0 ? '0/2' : inDeck === 1 ? '1/2' : '2/2 ✓';
 
-      const addBtn = document.createElement('button');
-      addBtn.className = 'builder-btn';
-      addBtn.textContent = '+';
-      addBtn.style.cssText = 'padding:2px 8px;min-width:26px;font-size:14px';
-      addBtn.addEventListener('click', () => _addCard(card.id));
+      // Add icon
+      const addIcon = document.createElement('span');
+      addIcon.className  = 'picker-add-icon';
+      addIcon.textContent = '+';
 
       row.appendChild(thumb);
-      row.appendChild(nameEl);
-      row.appendChild(meta);
-      row.appendChild(addBtn);
+      row.appendChild(info);
+      row.appendChild(badge);
+      row.appendChild(addIcon);
+
+      // Whole row is clickable
+      if (!isMaxed && !isFull) {
+        row.addEventListener('click', () => {
+          _addCard(card.id);
+          _renderPicker(); // refresh badges after add
+        });
+      }
+
       el.appendChild(row);
     });
   }
@@ -7463,6 +7553,7 @@ const DeckBuilder = (() => {
       return;
     }
     el.innerHTML = '';
+    const totalCards = _totalCards();
     entries.forEach(({ id, qty }) => {
       const card = FULL_CARD_DB.find(c => c.id === id);
       const name = card ? card.name : id;
@@ -7483,22 +7574,26 @@ const DeckBuilder = (() => {
 
       const qtyEl = document.createElement('span');
       qtyEl.className = 'deck-entry-qty';
-      qtyEl.textContent = `×${qty}`;
+      qtyEl.textContent = `${qty}/2`;
 
       const incBtn = document.createElement('button');
       incBtn.className = 'deck-entry-btn';
       incBtn.textContent = '+';
+      incBtn.title = 'Add one more';
+      incBtn.disabled = qty >= 2 || totalCards >= 20;
       incBtn.addEventListener('click', () => _addCard(id));
 
       const decBtn = document.createElement('button');
       decBtn.className = 'deck-entry-btn';
       decBtn.textContent = '−';
+      decBtn.title = 'Remove one';
+      decBtn.disabled = qty <= 1;
       decBtn.addEventListener('click', () => _decreaseQty(id));
 
       const delBtn = document.createElement('button');
-      delBtn.className = 'deck-entry-btn';
-      delBtn.style.color = 'var(--red)';
+      delBtn.className = 'deck-entry-btn remove';
       delBtn.textContent = '✕';
+      delBtn.title = 'Remove from deck';
       delBtn.addEventListener('click', () => _removeAll(id));
 
       row.appendChild(thumb);

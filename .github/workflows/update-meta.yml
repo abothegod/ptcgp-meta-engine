@@ -3,7 +3,7 @@
 # ║                                                                  ║
 # ║  File: .github/workflows/update-meta.yml                        ║
 # ║                                                                  ║
-# ║  Runs automatically on the 1st and 15th of every month at 09:00 ║
+# ║  Runs automatically every day at 09:00 UTC                      ║
 # ║  UTC, or manually via the Actions tab ("Run workflow" button).   ║
 # ║                                                                  ║
 # ║  What it does:                                                   ║
@@ -18,12 +18,12 @@
 # ║    8. Commits the updated HTML back to the repository            ║
 # ╚══════════════════════════════════════════════════════════════════╝
 
-name: Bi-Weekly Meta Update
+name: Daily Meta Update
 
 on:
-  # Run on the 1st and 15th of every month at 09:00 UTC
+  # Run every day at 09:00 UTC
   schedule:
-    - cron: '0 9 1,15 * *'
+    - cron: '0 9 * * *'
 
   # Allow manual trigger from the GitHub Actions tab
   workflow_dispatch:
