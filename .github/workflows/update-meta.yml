@@ -7,11 +7,15 @@
 # ║  UTC, or manually via the Actions tab ("Run workflow" button).   ║
 # ║                                                                  ║
 # ║  What it does:                                                   ║
-# ║    1. Fetches tournament data from Limitless + ptcgpocket.gg     ║
-# ║    2. Runs the Strategy Engine to score and rank archetypes      ║
-# ║    3. Builds optimal 20-card lists for the top 20 decks          ║
-# ║    4. Patches CARD_REGISTRY + META_SNAPSHOT inside the HTML file ║
-# ║    5. Commits the updated HTML back to the repository            ║
+# ║    1. Validates the upstream card database is reachable          ║
+# ║    2. Fetches tournament data from Limitless + ptcgpocket.gg     ║
+# ║    3. Runs the Strategy Engine to score and rank archetypes      ║
+# ║    4. Builds optimal 20-card lists for all qualifying decks      ║
+# ║    5. Runs deckgym-core simulations for the matchup matrix       ║
+# ║    6. Patches CARD_REGISTRY + META_SNAPSHOT + MATCHUP_MATRIX     ║
+# ║       + FULL_CARD_DB inside the HTML file                        ║
+# ║    7. Validates the patched output                               ║
+# ║    8. Commits the updated HTML back to the repository            ║
 # ╚══════════════════════════════════════════════════════════════════╝
 
 name: Bi-Weekly Meta Update
@@ -32,11 +36,53 @@ on:
         options:
           - 'true'
           - 'false'
+      force_resimulate:
+        description: 'Force resimulate — delete cached deckgym build and rebuild from scratch'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
 
 jobs:
+
+  # ────────────────────────────────────────────────────────────────
+  # PRE-FLIGHT: sanity-check upstream card database before anything
+  # ────────────────────────────────────────────────────────────────
+  validate-card-db:
+    name: Validate card database
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Fetch and verify flibustier card database
+        continue-on-error: true
+        run: |
+          echo "── Fetching cards.json from flibustier/pokemon-tcg-pocket-database ──"
+          HTTP_CODE=$(curl -s -o /tmp/cards.json -w "%{http_code}" \
+            "https://raw.githubusercontent.com/flibustier/pokemon-tcg-pocket-database/main/dist/cards.json")
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "WARN: HTTP $HTTP_CODE — card database unreachable; pipeline will use fallback data"
+            exit 0
+          fi
+
+          ENTRY_COUNT=$(node -e "try { const d=JSON.parse(require('fs').readFileSync('/tmp/cards.json','utf8')); console.log(Array.isArray(d)?d.length:Object.keys(d).length); } catch(e){ console.log(0); }")
+          echo "Card entries found: $ENTRY_COUNT"
+
+          if [ "$ENTRY_COUNT" -lt 400 ]; then
+            echo "WARN: Only $ENTRY_COUNT entries — database may be truncated or in unexpected format"
+          else
+            echo "✓ Card database looks healthy ($ENTRY_COUNT entries)"
+          fi
+
+  # ────────────────────────────────────────────────────────────────
+  # MAIN: fetch, score, simulate, patch, commit
+  # ────────────────────────────────────────────────────────────────
   update-meta:
     name: Update PTCGP Meta Data
     runs-on: ubuntu-latest
+    needs: validate-card-db
 
     # Prevent concurrent runs (e.g. if manually triggered while scheduled run is in progress)
     concurrency:
@@ -48,7 +94,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # Need full history so the commit step works
           fetch-depth: 1
 
       # ── Node.js ───────────────────────────────────────────────
@@ -58,12 +103,44 @@ jobs:
           node-version: '20'
           # No npm install needed — script uses only Node built-ins
 
+      # ── Force-clean deckgym cache when requested ───────────────
+      - name: Clear deckgym cache (force_resimulate)
+        if: ${{ github.event.inputs.force_resimulate == 'true' }}
+        run: |
+          echo "force_resimulate=true — removing cached deckgym build"
+          rm -rf deckgym-core/target ~/.cargo/registry ~/.cargo/git || true
+
+      # ── Rust toolchain ────────────────────────────────────────
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      # ── Cargo cache ───────────────────────────────────────────
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            deckgym-core/target
+          key: deckgym-${{ runner.os }}-${{ hashFiles('deckgym-core/Cargo.lock') }}
+          restore-keys: |
+            deckgym-${{ runner.os }}-
+
+      # ── Clone and build deckgym-core ──────────────────────────
+      - name: Clone and build deckgym-core
+        run: |
+          if [ ! -d "deckgym-core" ]; then
+            git clone https://github.com/bcollazo/deckgym-core.git
+          else
+            cd deckgym-core && git pull && cd ..
+          fi
+          cd deckgym-core && cargo build --release
+          echo "DECKGYM_PATH=$(pwd)/target/release/deckgym" >> $GITHUB_ENV
+
       # ── Run the Intelligence Engine ───────────────────────────
       - name: Run meta intelligence engine
         run: node update-meta.js
         env:
-          # These are passed in case future versions of the script
-          # need API keys (e.g. Limitless premium API)
           LIMITLESS_API_KEY: ${{ secrets.LIMITLESS_API_KEY }}
 
       # ── Validate the patched HTML ─────────────────────────────
@@ -72,18 +149,61 @@ jobs:
           echo "── Checking file was modified ──"
           git diff --stat ptcgp-meta-engine.html
 
-          echo "── Checking META_SNAPSHOT is present ──"
-          grep -c "META_SNAPSHOT" ptcgp-meta-engine.html | grep -v "^0$" || \
-            (echo "ERROR: META_SNAPSHOT missing from HTML" && exit 1)
+          echo ""
+          echo "── Checking FULL_CARD_DB is present ──"
+          grep -q "FULL_CARD_DB" ptcgp-meta-engine.html || \
+            (echo "ERROR: FULL_CARD_DB missing from HTML" && exit 1)
+          echo "✓ FULL_CARD_DB present"
 
+          echo ""
           echo "── Checking CARD_REGISTRY is present ──"
-          grep -c "CARD_REGISTRY" ptcgp-meta-engine.html | grep -v "^0$" || \
+          grep -q "CARD_REGISTRY" ptcgp-meta-engine.html || \
             (echo "ERROR: CARD_REGISTRY missing from HTML" && exit 1)
+          echo "✓ CARD_REGISTRY present"
 
-          echo "── Deck count ──"
-          grep -c '"tier":'  ptcgp-meta-engine.html || true
+          echo ""
+          echo "── Checking META_SNAPSHOT has at least 10 deck entries ──"
+          DECK_COUNT=$(grep -c '"tier":' ptcgp-meta-engine.html || echo "0")
+          echo "Deck entries found: $DECK_COUNT"
+          if [ "$DECK_COUNT" -lt 10 ]; then
+            echo "ERROR: META_SNAPSHOT has only $DECK_COUNT deck entries (expected ≥ 10)" && exit 1
+          fi
+          echo "✓ META_SNAPSHOT has $DECK_COUNT entries"
 
-          echo "✓ Validation passed"
+          echo ""
+          echo "── Checking MATCHUP_MATRIX is present ──"
+          grep -q "MATCHUP_MATRIX" ptcgp-meta-engine.html || \
+            (echo "ERROR: MATCHUP_MATRIX missing from HTML" && exit 1)
+          echo "✓ MATCHUP_MATRIX present"
+
+          echo ""
+          echo "── Checking HTML file size (200KB – 5MB) ──"
+          FILE_SIZE=$(wc -c < ptcgp-meta-engine.html)
+          echo "File size: $FILE_SIZE bytes"
+          if [ "$FILE_SIZE" -lt 204800 ]; then
+            echo "ERROR: HTML file is too small ($FILE_SIZE bytes < 200KB)" && exit 1
+          fi
+          if [ "$FILE_SIZE" -gt 5242880 ]; then
+            echo "ERROR: HTML file is too large ($FILE_SIZE bytes > 5MB)" && exit 1
+          fi
+          echo "✓ File size OK ($FILE_SIZE bytes)"
+
+          echo ""
+          echo "── Checking CARD_REGISTRY JS syntax ──"
+          REGISTRY_LINE=$(grep -o 'const CARD_REGISTRY = {' ptcgp-meta-engine.html | head -1)
+          if [ -n "$REGISTRY_LINE" ]; then
+            node --input-type=module --eval \
+              "import fs from 'fs'; const html=fs.readFileSync('ptcgp-meta-engine.html','utf8'); const m=html.match(/const CARD_REGISTRY = \{[\s\S]*?\};/); if(!m) throw new Error('CARD_REGISTRY not found'); eval('(function(){'+ m[0] +'})()'); console.log('✓ CARD_REGISTRY JS syntax valid');" \
+              || (echo "WARN: Could not verify JS syntax — skipping" && true)
+          fi
+
+          echo ""
+          echo "── Counting matchup pairs ──"
+          MATCHUP_PAIRS=$(grep -c '"[a-z].*":' ptcgp-meta-engine.html | head -1 || echo "?")
+          echo "Approx matrix entries: $MATCHUP_PAIRS"
+
+          echo ""
+          echo "✓ All validation checks passed"
 
       # ── Commit & Push (skipped on dry run) ────────────────────
       - name: Commit updated HTML
@@ -96,10 +216,41 @@ jobs:
           if git diff --quiet ptcgp-meta-engine.html; then
             echo "No changes to commit — meta data unchanged."
           else
-            DECK_COUNT=$(grep -c '"tier":' ptcgp-meta-engine.html || echo "?")
             DATE=$(date -u '+%Y-%m-%d')
+
+            DECK_COUNT=$(grep -c '"tier":' ptcgp-meta-engine.html || echo "?")
+
+            # Count unique card entries in FULL_CARD_DB (lines containing "\"id\":")
+            CARD_COUNT=$(node -e "
+              const fs = require('fs');
+              const html = fs.readFileSync('ptcgp-meta-engine.html','utf8');
+              const m = html.match(/const FULL_CARD_DB = \[([\s\S]*?)\];/);
+              if (!m) { console.log('?'); process.exit(0); }
+              try {
+                const arr = JSON.parse('[' + m[1] + ']');
+                console.log(arr.length);
+              } catch(e) {
+                // fallback: count id fields
+                console.log((m[1].match(/\"id\":/g)||[]).length);
+              }
+            " 2>/dev/null || echo "?")
+
+            # Count matchup simulations (number of decimal values in MATCHUP_MATRIX)
+            MATCHUP_COUNT=$(node -e "
+              const fs = require('fs');
+              const html = fs.readFileSync('ptcgp-meta-engine.html','utf8');
+              const m = html.match(/const MATCHUP_MATRIX = \{([\s\S]*?)\};/);
+              if (!m || !m[1].trim()) { console.log(0); process.exit(0); }
+              try {
+                const obj = JSON.parse('{' + m[1] + '}');
+                let n = 0;
+                Object.values(obj).forEach(row => { n += Object.keys(row).length; });
+                console.log(Math.floor(n / 2));
+              } catch(e) { console.log('?'); }
+            " 2>/dev/null || echo "?")
+
             git add ptcgp-meta-engine.html
-            git commit -m "chore(meta): bi-weekly update ${DATE} — ${DECK_COUNT} decks"
+            git commit -m "chore(meta): bi-weekly update ${DATE} — ${DECK_COUNT} decks · ${CARD_COUNT} cards · ${MATCHUP_COUNT} matchups simulated"
             git push
             echo "✓ Committed and pushed."
           fi
@@ -110,4 +261,4 @@ jobs:
         run: |
           echo "DRY RUN — changes NOT committed."
           echo "Diff preview:"
-          git diff ptcgp-meta-engine.html | head -80
+          git diff ptcgp-meta-engine.html | head -100

@@ -48,8 +48,10 @@
 
 'use strict';
 
-const fs   = require('fs');
-const path = require('path');
+const fs             = require('fs');
+const path           = require('path');
+const os             = require('os');
+const { execFile }   = require('child_process');
 
 // ═══════════════════════════════════════════════════════════════════
 // CONFIG
@@ -70,6 +72,10 @@ const MIN_PLAYERS = 20;
 
 // How many recent tournaments to sample
 const TOURNAMENT_LIMIT = 50;
+
+// Full card database source (flibustier/pokemon-tcg-pocket-database)
+const CARDS_DB_URL = 'https://raw.githubusercontent.com/flibustier/pokemon-tcg-pocket-database/main/dist/cards.json';
+const SETS_DB_URL  = 'https://raw.githubusercontent.com/flibustier/pokemon-tcg-pocket-database/main/dist/sets.json';
 
 // Polite delay between standings API calls (ms)
 const API_DELAY_MS = 150;
@@ -96,19 +102,33 @@ const TIER_THRESHOLDS = { S: 75, A: 60, B: 45 };
 
 /**
  * Score a deck archetype from 0–100.
+ *
+ * Improvements over v1:
+ *  - Win-rate normalised against real dataset min/max (no hardcoded floor)
+ *  - Confidence penalty (-15%) for archetypes with fewer than 30 appearances
+ *  - Recency boost applied to meta-share component when an archetype has
+ *    disproportionate representation in the last-14-days window
  */
 function scoreArchetype(archetype, allDecks) {
-  const maxWinRate = Math.max(...allDecks.map(d => d.winRate   || 50));
-  const maxShare   = Math.max(...allDecks.map(d => d.metaShare || 1));
+  // Real dataset bounds — avoids the hardcoded 45% floor bias
+  const winRates = allDecks.map(d => d.winRate || 50).filter(Number.isFinite);
+  const minWR    = Math.min(...winRates);
+  const maxWR    = Math.max(...winRates);
+  const maxShare = Math.max(...allDecks.map(d => d.metaShare || 0), 0.001);
 
-  // 1. Win-rate component (0–40)
-  const wrNorm  = Math.min((archetype.winRate - 45) / (maxWinRate - 45), 1);
+  // 1. Win-rate component (0–40) — normalised against real range
+  const wrRange = maxWR - minWR;
+  const wrNorm  = wrRange > 0
+    ? Math.min((archetype.winRate - minWR) / wrRange, 1)
+    : 0.5;
   const wrScore = Math.max(wrNorm * 40, 0);
 
-  // 2. Meta-share (log-weighted, 0–20)
-  const shareNorm  = Math.log10((archetype.metaShare || 0) + 1) /
-                     Math.log10(maxShare + 1);
-  const shareScore = shareNorm * 20;
+  // 2. Meta-share (log-weighted, 0–20) + optional recency boost
+  //    recencyBoost = weightedAppearances / appearances (>1 if deck is hotter lately)
+  const shareNorm   = Math.log10((archetype.metaShare || 0) + 1) /
+                      Math.log10(maxShare + 1);
+  const recencyMul  = Math.min(archetype.recencyBoost || 1.0, 1.5); // cap at 1.5
+  const shareScore  = Math.min(shareNorm * recencyMul * 20, 20);
 
   // 3. Type coherence
   const energyCount = (archetype.energyTypes || []).length;
@@ -124,7 +144,11 @@ function scoreArchetype(archetype, allDecks) {
   // 6. Disruption
   const dispScore = Math.min((archetype.disruptionScore || 0), 10);
 
-  const total = wrScore + shareScore + typeScore + evoScore + setupScore + dispScore;
+  let total = wrScore + shareScore + typeScore + evoScore + setupScore + dispScore;
+
+  // 7. Confidence multiplier — penalise thin sample sizes
+  if ((archetype.count || 0) < 30) total *= 0.85;
+
   return Math.round(Math.min(total, 100));
 }
 
@@ -338,12 +362,176 @@ async function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function fetchJson(url) {
+// ═══════════════════════════════════════════════════════════════════
+// FULL CARD DATABASE FETCHER
+// Fetches flibustier/pokemon-tcg-pocket-database and normalises to
+// our internal shape.  Falls back to KNOWN_CARDS if fetch fails.
+// ═══════════════════════════════════════════════════════════════════
+
+function _normalizeRarity(raw) {
+  if (!raw) return 'C';
+  const r = String(raw).toLowerCase().replace(/\s+/g, '');
+  if (r === 'c' || r === 'common')                       return 'C';
+  if (r === 'u' || r === 'uncommon')                     return 'U';
+  if (r === 'r' || r === 'rare')                         return 'R';
+  if (r === 'rr' || r === 'doublerare')                  return 'R';
+  // EX-tier bucket: EX, ex, SR, AR, SAR, IM, UR, Crown, Immersive
+  if (/^(ex|sr|ar|sar|im|ur|crown|immersive)$/.test(r)) return 'EX';
+  if (r === 'pr' || r === 'promo')                       return 'PR';
+  return raw; // passthrough for anything not recognised
+}
+
+function _normalizeType(raw) {
+  if (!raw) return 'Colorless';
+  const map = {
+    fire:'Fire', water:'Water', grass:'Grass',
+    lightning:'Lightning', electric:'Lightning',
+    psychic:'Psychic', fighting:'Fighting',
+    darkness:'Dark', dark:'Dark',
+    metal:'Metal', steel:'Metal',
+    dragon:'Dragon', fairy:'Fairy',
+    colorless:'Colorless', normal:'Colorless',
+    trainer:'Trainer', supporter:'Trainer',
+    item:'Trainer', tool:'Trainer', stadium:'Trainer',
+  };
+  return map[(Array.isArray(raw) ? raw[0] : raw).toLowerCase()] || (Array.isArray(raw) ? raw[0] : raw);
+}
+
+function _buildImageUrl(setCode, num) {
+  const numStr = String(parseInt(num, 10) || 0).padStart(3, '0');
+  return `https://limitlesstcg.nyc3.cdn.digitaloceanspaces.com/pocket/${setCode}/${setCode}_${numStr}_EN_SM.webp`;
+}
+
+function _buildFallbackCardDb() {
+  return Object.entries(KNOWN_CARDS).map(([id, card]) => {
+    const dash    = id.lastIndexOf('-');
+    const setCode = id.substring(0, dash);
+    const numStr  = id.substring(dash + 1).padStart(3, '0');
+    return {
+      id, name: card.name, type: card.type, pack: card.pack,
+      setCode, number: numStr, rarity: card.rarity,
+      hp: null, retreatCost: null, attacks: [], abilities: [],
+      deckgymName: card.name, imageUrl: _buildImageUrl(setCode, numStr),
+    };
+  });
+}
+
+async function fetchCardDatabase() {
+  log('\n► Phase 0: Fetching full card database from flibustier/pokemon-tcg-pocket-database…');
+
+  const [rawCards, rawSets] = await Promise.all([
+    fetchJson(CARDS_DB_URL),
+    fetchJson(SETS_DB_URL),
+  ]);
+
+  if (!rawCards || !Array.isArray(rawCards)) {
+    log('  WARN: Card DB fetch failed — falling back to KNOWN_CARDS', 'yellow');
+    return _buildFallbackCardDb();
+  }
+
+  // Build set-name lookup
+  const setNames = {};
+  if (rawSets && Array.isArray(rawSets)) {
+    for (const s of rawSets) {
+      const code = s.id || s.code || s.setId;
+      const name = s.name;
+      if (code && name) setNames[code] = name;
+    }
+  }
+
+  log(`  Fetched ${rawCards.length} cards, ${Object.keys(setNames).length} sets`);
+
+  const normalized = [];
+  for (const raw of rawCards) {
+    try {
+      // Derive setCode + zero-padded number
+      let setCode, numStr;
+      if (raw.id && raw.id.includes('-')) {
+        // Combined id field present (e.g. "A1-087")
+        const dash = raw.id.lastIndexOf('-');
+        setCode = raw.id.substring(0, dash);
+        numStr  = String(parseInt(raw.id.substring(dash + 1), 10)).padStart(3, '0');
+      } else if ((raw.set || raw.setId) && raw.number !== undefined) {
+        setCode = raw.set || raw.setId;
+        numStr  = String(parseInt(String(raw.number), 10) || 0).padStart(3, '0');
+      } else {
+        continue; // cannot derive id
+      }
+
+      const id       = `${setCode}-${numStr}`;
+      const packName = setNames[setCode] || raw.setName || raw.pack || setCode;
+
+      // Type
+      let type = 'Colorless';
+      if (raw.type)    type = _normalizeType(raw.type);
+      else if (raw.element) type = _normalizeType(raw.element);
+      else if (raw.category === 'Trainer' || raw.supertype === 'Trainer') type = 'Trainer';
+      else if (Array.isArray(raw.subtypes) &&
+               (raw.subtypes.includes('Supporter') || raw.subtypes.includes('Item') ||
+                raw.subtypes.includes('Tool') || raw.subtypes.includes('Stadium'))) {
+        type = 'Trainer';
+      }
+
+      const hp          = raw.hp ? (parseInt(raw.hp, 10) || null) : null;
+      const retreatCost = raw.retreat !== undefined   ? (parseInt(raw.retreat, 10) || 0)
+                        : raw.retreatCost !== undefined ? (parseInt(raw.retreatCost, 10) || 0)
+                        : null;
+
+      const attacks = (Array.isArray(raw.attacks) ? raw.attacks : []).map(a => ({
+        name:   a.name   || '',
+        damage: a.damage || a.dmg || '',
+        cost:   Array.isArray(a.cost) ? a.cost : (Array.isArray(a.energy) ? a.energy : []),
+        text:   a.text   || a.effect || '',
+      }));
+
+      const abilities = (Array.isArray(raw.abilities) ? raw.abilities :
+                         raw.ability ? [raw.ability] : []).map(a => ({
+        name: a.name || '',
+        text: a.text || a.effect || '',
+      }));
+
+      normalized.push({
+        id, name: raw.name || id, type, pack: packName,
+        setCode, number: numStr,
+        rarity:      _normalizeRarity(raw.rarity),
+        hp, retreatCost, attacks, abilities,
+        deckgymName: raw.name || id,
+        imageUrl:    _buildImageUrl(setCode, numStr),
+      });
+    } catch (_) { /* skip malformed entries */ }
+  }
+
+  // Stable set order, then card number within each set
+  normalized.sort((a, b) => {
+    if (a.setCode < b.setCode) return -1;
+    if (a.setCode > b.setCode) return  1;
+    return parseInt(a.number, 10) - parseInt(b.number, 10);
+  });
+
+  log(`  ✓ Normalised ${normalized.length} cards`);
+  return normalized;
+}
+
+function buildFullCardDbJs(cards) {
+  const lines = cards.map(c => {
+    // Compact single-line serialisation — no indented pretty-print to keep file size down
+    return '  ' + JSON.stringify(c);
+  });
+  return `const FULL_CARD_DB = [\n${lines.join(',\n')}\n];`;
+}
+
+async function fetchJson(url, _retries = 1) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
   try {
     const res = await fetch(url, { signal: controller.signal, headers: FETCH_HEADERS });
     clearTimeout(timer);
+    // Retry once on rate-limit or temporary server error
+    if ((res.status === 429 || res.status === 503) && _retries > 0) {
+      log(`  WARN: ${url} — HTTP ${res.status}, retrying in 2s…`, 'yellow');
+      await sleep(2000);
+      return fetchJson(url, 0);
+    }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();
   } catch (err) {
@@ -353,64 +541,90 @@ async function fetchJson(url) {
   }
 }
 
+// Recency window for the 1.5× appearance weight
+const RECENCY_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+
 async function fetchLimitlessData() {
   log('  Fetching tournament list from Limitless API…');
 
+  // Use format=standard to get only Standard-format POCKET tournaments
   const tournaments = await fetchJson(
-    `${LIMITLESS_BASE}/tournaments?game=POCKET&limit=${TOURNAMENT_LIMIT}`
+    `${LIMITLESS_BASE}/tournaments?game=POCKET&format=standard&limit=${TOURNAMENT_LIMIT}`
   );
-  if (!tournaments) return [];
+  if (!tournaments) {
+    log('  WARN: Limitless API unreachable — returning empty dataset', 'yellow');
+    return { archetypes: [], stats: { tournaments: 0, players: 0 } };
+  }
 
-  // Filter to standard-format, meaningful-sized tournaments
+  const now = Date.now();
+
+  // Filter to meaningful-sized, standard-format tournaments
+  // SKIP_FORMATS guards against non-standard variants returned despite the query param
   const usable = tournaments.filter(t =>
     t.players >= MIN_PLAYERS &&
     (!t.format || !SKIP_FORMATS.has(t.format.toUpperCase()))
   );
   log(`  Using ${usable.length}/${tournaments.length} tournaments (≥${MIN_PLAYERS} players, standard format)`);
 
-  // Aggregate deck stats across all tournament standings
-  const deckMap   = {}; // deckId → { name, wins, losses, appearances }
-  let   totalPlayers = 0;
-  let   fetched   = 0;
+  // deckId → aggregated stats
+  const deckMap = {};
+  let totalPlayers = 0;
+  let fetched      = 0;
 
   for (const t of usable) {
     const standings = await fetchJson(`${LIMITLESS_BASE}/tournaments/${t.id}/standings`);
     if (!standings) continue;
     fetched++;
 
+    // Recency: last 14 days count 1.5× toward appearance weight
+    const tDate       = t.date ? new Date(t.date).getTime() : 0;
+    const isRecent    = tDate > 0 && (now - tDate) <= RECENCY_WINDOW_MS;
+    const recencyMult = isRecent ? 1.5 : 1.0;
+
     for (const player of standings) {
       if (!player.deck?.id) continue;
       const { id, name } = player.deck;
-      if (!deckMap[id]) deckMap[id] = { name, wins: 0, losses: 0, appearances: 0 };
-      deckMap[id].wins        += player.record?.wins   || 0;
-      deckMap[id].losses      += player.record?.losses || 0;
-      deckMap[id].appearances += 1;
+      if (!deckMap[id]) {
+        deckMap[id] = { name, wins: 0, losses: 0, appearances: 0, weightedAppearances: 0 };
+      }
+      deckMap[id].wins                += player.record?.wins   || 0;
+      deckMap[id].losses              += player.record?.losses || 0;
+      deckMap[id].appearances         += 1;
+      deckMap[id].weightedAppearances += recencyMult;
     }
     totalPlayers += standings.length;
 
-    await sleep(API_DELAY_MS); // polite pacing
+    await sleep(API_DELAY_MS);
   }
 
   log(`  Processed ${totalPlayers} player records across ${fetched} tournaments`);
 
-  // Convert to archetype array
+  // Convert to archetype array — no top-N cap
   const archetypes = Object.entries(deckMap)
     .filter(([, s]) => s.appearances >= MIN_APPEARANCES)
     .map(([limitlessId, s]) => {
       const games = s.wins + s.losses;
+      // recencyBoost > 1.0 means the deck is proportionally hotter in recent events
+      const recencyBoost = s.appearances > 0
+        ? s.weightedAppearances / s.appearances
+        : 1.0;
       return {
-        name:        s.name,
-        winRate:     games > 0 ? (s.wins / games) * 100 : 50,
-        metaShare:   totalPlayers > 0 ? (s.appearances / totalPlayers) * 100 : 0,
-        count:       s.appearances,
+        name:         s.name,
+        winRate:      games > 0 ? (s.wins / games) * 100 : 50,
+        metaShare:    totalPlayers > 0 ? (s.appearances / totalPlayers) * 100 : 0,
+        count:        s.appearances,
+        recencyBoost,
         limitlessId,
-        source:      'Limitless',
+        source:       'Limitless',
       };
     })
     .sort((a, b) => b.metaShare - a.metaShare);
 
   log(`  Limitless API: ${archetypes.length} archetypes with ≥${MIN_APPEARANCES} appearances`);
-  return archetypes;
+  return {
+    archetypes,
+    stats: { tournaments: fetched, players: totalPlayers },
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -611,13 +825,20 @@ function slugify(name) {
     .replace(/-+/g, '-');
 }
 
-function buildRegistryJs(decks) {
+function buildRegistryJs(decks, fullCardDb) {
+  // fullCardDb entries take priority over the hardcoded KNOWN_CARDS fallback
+  const dbLookup = {};
+  for (const c of (fullCardDb || [])) dbLookup[c.id] = c;
+
   const usedIds = new Set();
   for (const deck of decks) for (const card of deck.cards) usedIds.add(card.id);
-  const entries = [...usedIds].filter(id => KNOWN_CARDS[id]).sort().map(id => {
-    const c = KNOWN_CARDS[id];
+
+  const entries = [...usedIds].sort().map(id => {
+    const c = dbLookup[id] || KNOWN_CARDS[id];
+    if (!c) return null;
     return `  ${JSON.stringify(id)}: { name: ${JSON.stringify(c.name)}, type: ${JSON.stringify(c.type)}, pack: ${JSON.stringify(c.pack)}, rarity: ${JSON.stringify(c.rarity)} }`;
-  });
+  }).filter(Boolean);
+
   return `const CARD_REGISTRY = {\n${entries.join(',\n')}\n};`;
 }
 
@@ -636,7 +857,172 @@ function buildSnapshotJs(decks) {
   return `const META_SNAPSHOT = [\n${header}${deckStrs.join(',\n')}\n];`;
 }
 
-function patchHtml(decks) {
+// ═══════════════════════════════════════════════════════════════════
+// SIMULATION PHASE — deckgym-core matchup matrix
+// ═══════════════════════════════════════════════════════════════════
+
+/** Locate the deckgym binary. Returns path string or null. */
+function findDeckgym() {
+  const envPath = process.env.DECKGYM_PATH;
+  if (envPath && fs.existsSync(envPath)) return envPath;
+  const localPath = path.resolve(__dirname, 'deckgym-core', 'target', 'release', 'deckgym');
+  if (fs.existsSync(localPath)) return localPath;
+  return null;
+}
+
+/** Wrap execFile in a Promise. */
+function runProcess(bin, args) {
+  return new Promise((resolve, reject) => {
+    execFile(bin, args, { maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) return reject(new Error(stderr || err.message));
+      resolve(stdout);
+    });
+  });
+}
+
+/**
+ * Convert a finalDeck object to DeckGym text format.
+ * Returns the file content string, or null if the deck has no resolvable cards.
+ */
+function deckToText(deck, fullCardDb) {
+  const dbLookup = {};
+  for (const c of (fullCardDb || [])) dbLookup[c.id] = c;
+
+  const lines = [];
+  for (const { id, qty } of deck.cards) {
+    const entry = dbLookup[id] || KNOWN_CARDS[id];
+    if (!entry) {
+      log(`  WARN: no card entry for ${id} in deck "${deck.name}" — skipping`, 'yellow');
+      continue;
+    }
+    const nm = entry.deckgymName || entry.name;
+    if (!nm) {
+      log(`  WARN: no deckgymName for ${id} in deck "${deck.name}" — skipping`, 'yellow');
+      continue;
+    }
+    lines.push(`${nm} ${qty}`);
+  }
+  return lines.length ? lines.join('\n') : null;
+}
+
+/**
+ * Parse deckgym stdout for the win rate of deck A.
+ * Expected output contains a line like: "Deck A wins: 54.2%"
+ */
+function parseDeckgymOutput(stdout) {
+  const match = stdout.match(/Deck\s+A\s+wins?[:\s]+([0-9]+(?:\.[0-9]+)?)\s*%/i);
+  if (match) return parseFloat(match[1]) / 100;
+  // Fallback: try "Win rate: 54.2%" style
+  const alt = stdout.match(/Win\s+rate[:\s]+([0-9]+(?:\.[0-9]+)?)\s*%/i);
+  if (alt) return parseFloat(alt[1]) / 100;
+  return null;
+}
+
+/**
+ * Run pairwise simulations for all decks.
+ * Returns matchupMatrix or null if deckgym is unavailable.
+ * Mutates deck.winRate with simulation averages when matrix is populated.
+ */
+async function runSimulations(decks, fullCardDb) {
+  const deckgym = findDeckgym();
+  if (!deckgym) {
+    log('\n► Phase 5b: deckgym-core not found — skipping simulations', 'yellow');
+    return null;
+  }
+
+  const SIM_COUNT  = 2000;
+  const BATCH_SIZE = 8;
+  const tmpDir     = path.join(os.tmpdir(), 'deckgym-sims');
+  const writtenFiles = [];
+
+  try {
+    fs.mkdirSync(tmpDir, { recursive: true });
+
+    // Write deck text files
+    const deckFiles = {};
+    for (const deck of decks) {
+      const text = deckToText(deck, fullCardDb);
+      if (!text) { log(`  WARN: skipping simulation for empty deck "${deck.name}"`, 'yellow'); continue; }
+      const file = path.join(tmpDir, `${deck.id}.txt`);
+      fs.writeFileSync(file, text, 'utf-8');
+      writtenFiles.push(file);
+      deckFiles[deck.id] = file;
+    }
+
+    const validDecks = decks.filter(d => deckFiles[d.id]);
+    if (validDecks.length < 2) {
+      log('  WARN: fewer than 2 valid decks — cannot run simulations', 'yellow');
+      return null;
+    }
+
+    log(`\n► Phase 5b: Running simulations (${validDecks.length} decks, ${validDecks.length * (validDecks.length - 1) / 2} matchups)…`);
+
+    // Build all unique pairs
+    const pairs = [];
+    for (let i = 0; i < validDecks.length; i++) {
+      for (let j = i + 1; j < validDecks.length; j++) {
+        pairs.push([validDecks[i], validDecks[j]]);
+      }
+    }
+
+    const matchupMatrix = {};
+    for (const d of validDecks) matchupMatrix[d.id] = {};
+
+    let done = 0;
+    for (let b = 0; b < pairs.length; b += BATCH_SIZE) {
+      const batch = pairs.slice(b, b + BATCH_SIZE);
+      await Promise.all(batch.map(async ([deckA, deckB]) => {
+        try {
+          const stdout = await runProcess(deckgym, [
+            'simulate',
+            deckFiles[deckA.id],
+            deckFiles[deckB.id],
+            '--num', String(SIM_COUNT),
+          ]);
+          const winRateA = parseDeckgymOutput(stdout);
+          if (winRateA === null) {
+            log(`  WARN: could not parse output for ${deckA.name} vs ${deckB.name}`, 'yellow');
+            return;
+          }
+          matchupMatrix[deckA.id][deckB.id] = winRateA;
+          matchupMatrix[deckB.id][deckA.id] = parseFloat((1 - winRateA).toFixed(4));
+          done++;
+        } catch (err) {
+          log(`  WARN: simulation failed for ${deckA.name} vs ${deckB.name}: ${err.message}`, 'yellow');
+        }
+      }));
+    }
+
+    log(`  ✓ ${done} / ${pairs.length} matchups simulated`);
+
+    // Update deck winRates from simulation averages
+    for (const deck of validDecks) {
+      const results = Object.values(matchupMatrix[deck.id]);
+      if (results.length) {
+        const avg = results.reduce((s, v) => s + v, 0) / results.length;
+        deck.winRate = parseFloat((avg * 100).toFixed(1));
+      }
+    }
+    log('  ✓ Deck win rates updated from simulation data');
+
+    return matchupMatrix;
+
+  } finally {
+    for (const f of writtenFiles) {
+      try { fs.unlinkSync(f); } catch (_) {}
+    }
+    try { fs.rmdirSync(tmpDir); } catch (_) {}
+  }
+}
+
+function buildMatchupMatrixJs(matrix) {
+  if (!matrix || !Object.keys(matrix).length) {
+    return 'const MATCHUP_MATRIX = {};';
+  }
+  return `const MATCHUP_MATRIX = ${JSON.stringify(matrix, null, 2)};`;
+}
+
+function patchHtml(decks, fullCardDb, metaStats = {}, matchupMatrix = null) {
   if (!fs.existsSync(HTML_FILE)) {
     log(`ERROR: HTML file not found at ${HTML_FILE}`, 'red');
     process.exit(1);
@@ -644,14 +1030,25 @@ function patchHtml(decks) {
 
   let html = fs.readFileSync(HTML_FILE, 'utf-8');
 
+  // ── FULL_CARD_DB ──────────────────────────────────────────────
+  const fullDbRe = /const FULL_CARD_DB = \[[\s\S]*?\];/;
+  if (fullDbRe.test(html)) {
+    html = html.replace(fullDbRe, buildFullCardDbJs(fullCardDb));
+    log('  ✓ FULL_CARD_DB patched');
+  } else {
+    log('  WARN: FULL_CARD_DB block not found in HTML — skipping', 'yellow');
+  }
+
+  // ── CARD_REGISTRY ─────────────────────────────────────────────
   const registryRe = /const CARD_REGISTRY = \{[\s\S]*?\};/;
   if (!registryRe.test(html)) {
     log('ERROR: CARD_REGISTRY block not found in HTML.', 'red');
     process.exit(1);
   }
-  html = html.replace(registryRe, buildRegistryJs(decks));
+  html = html.replace(registryRe, buildRegistryJs(decks, fullCardDb));
   log('  ✓ CARD_REGISTRY patched');
 
+  // ── META_SNAPSHOT ─────────────────────────────────────────────
   const snapshotRe = /const META_SNAPSHOT = \[[\s\S]*?\];/;
   if (!snapshotRe.test(html)) {
     log('ERROR: META_SNAPSHOT block not found in HTML.', 'red');
@@ -660,10 +1057,37 @@ function patchHtml(decks) {
   html = html.replace(snapshotRe, buildSnapshotJs(decks));
   log('  ✓ META_SNAPSHOT patched');
 
+  // ── MATCHUP_MATRIX ────────────────────────────────────────────
+  const matrixRe = /const MATCHUP_MATRIX = \{[\s\S]*?\};/;
+  if (matrixRe.test(html)) {
+    html = html.replace(matrixRe, buildMatchupMatrixJs(matchupMatrix));
+    log('  ✓ MATCHUP_MATRIX patched');
+  } else {
+    log('  WARN: MATCHUP_MATRIX block not found in HTML — skipping', 'yellow');
+  }
+
+  // ── Freshness badge ───────────────────────────────────────────
   const now   = new Date();
   const label = now.toLocaleString('en-US', { month: 'short', year: 'numeric' });
   html = html.replace(
     /(<strong id="meta-updated-date">)[^<]*(< *\/strong>)/,
+    `$1${label}$2`
+  );
+  if (metaStats.tournaments) {
+    html = html.replace(
+      /(<strong id="meta-tourney-count">)[^<]*(< *\/strong>)/,
+      `$1${metaStats.tournaments}$2`
+    );
+  }
+  if (metaStats.players) {
+    html = html.replace(
+      /(<strong id="meta-player-count">)[^<]*(< *\/strong>)/,
+      `$1${metaStats.players.toLocaleString()}$2`
+    );
+  }
+  // Update nav-bar date pill
+  html = html.replace(
+    /(<span id="nav-meta-date">)[^<]*(< *\/span>)/,
     `$1${label}$2`
   );
   log('  ✓ Freshness badge updated');
@@ -681,17 +1105,24 @@ async function runPipeline() {
   log('║   PTCGP Meta Intelligence Engine  — START   ║');
   log('╚══════════════════════════════════════════════╝\n');
 
+  // ── 0. FULL CARD DB ────────────────────────────────────────────
+  const fullCardDb = await fetchCardDatabase();
+
   // ── 1. FETCH ──────────────────────────────────────────────────
-  log('► Phase 1: Fetching data…');
-  const [limitlessData, editorialTiers] = await Promise.all([
+  log('\n► Phase 1: Fetching tournament data…');
+  const [limitlessResult, editorialTiers] = await Promise.all([
     fetchLimitlessData(),
     fetchPtcgpocketTiers(),
   ]);
+
+  const limitlessData = limitlessResult.archetypes;
+  const metaStats     = limitlessResult.stats;
 
   if (limitlessData.length === 0) {
     log('ERROR: No archetype data from Limitless API. Aborting.', 'red');
     process.exit(1);
   }
+  log(`  Fetched ${limitlessData.length} archetypes from ${metaStats.tournaments} tournaments (${metaStats.players.toLocaleString()} players)`);
 
   // ── 2. MERGE ──────────────────────────────────────────────────
   log('\n► Phase 2: Merging sources…');
@@ -703,6 +1134,7 @@ async function runPipeline() {
   const enriched = merged.map(enrichArchetype);
 
   // ── 4. SCORE & FILTER ─────────────────────────────────────────
+  // All archetypes meeting the sample threshold are included (no top-N cap)
   log('\n► Phase 4: Scoring…');
   const scored = enriched
     .filter(a => (a.winRate || 50) >= 44)
@@ -714,8 +1146,8 @@ async function runPipeline() {
         tier: arch.sourceTier || assignTier(score),
       };
     })
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 20);
+    .sort((a, b) => b.score - a.score);
+  // ↑ No .slice() — all qualifying archetypes are tracked
 
   scored.forEach((d, i) => {
     const wr = (d.winRate || 50).toFixed(1);
@@ -745,9 +1177,12 @@ async function runPipeline() {
     };
   });
 
+  // ── 5b. SIMULATE MATCHUPS ──────────────────────────────────────
+  const matchupMatrix = await runSimulations(finalDecks, fullCardDb);
+
   // ── 6. PATCH HTML ─────────────────────────────────────────────
   log('\n► Phase 6: Patching HTML file…');
-  patchHtml(finalDecks);
+  patchHtml(finalDecks, fullCardDb, metaStats, matchupMatrix);
 
   log('\n✓ Update complete.\n');
 }
