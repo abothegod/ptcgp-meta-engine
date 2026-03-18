@@ -922,6 +922,353 @@ function _buildFallbackCardDb() {
   });
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// LIMITLESS TYPE OVERRIDES — authoritative web scrape
+// ════════════════════════════════════════════════════════════════════════════
+// Fetches card types from pocket.limitlesstcg.com (the list view), which is
+// the most authoritative source for PTCGP energy types.  Returns a lookup
+// { "A1-001": "Grass", ... } covering all known sets.
+//
+// ptcg-symbol letter → type name mapping used by Limitless:
+//   G=Grass  R=Fire  W=Water  L=Lightning  P=Psychic  F=Fighting
+//   D=Dark   M=Metal  N=Dragon  C=Colorless
+// Trainers (Supporter / Item / Stadium / Fossil / Tool) have no symbol.
+// ════════════════════════════════════════════════════════════════════════════
+
+const _LIMITLESS_SETS = [
+  { limitless: 'A1',  db: 'A1'      },
+  { limitless: 'A1a', db: 'A1a'     },
+  { limitless: 'A2',  db: 'A2'      },
+  { limitless: 'A2a', db: 'A2a'     },
+  { limitless: 'A2b', db: 'A2b'     },
+  { limitless: 'A3',  db: 'A3'      },
+  { limitless: 'A3a', db: 'A3a'     },
+  { limitless: 'A3b', db: 'A3b'     },
+  { limitless: 'A4',  db: 'A4'      },
+  { limitless: 'A4a', db: 'A4a'     },
+  { limitless: 'A4b', db: 'A4b'     },
+  { limitless: 'B1',  db: 'B1'      },
+  { limitless: 'B1a', db: 'B1a'     },
+  { limitless: 'B2',  db: 'B2'      },
+  { limitless: 'B2a', db: 'B2a'     },
+  { limitless: 'P-A', db: 'PROMO-A' },
+  { limitless: 'P-B', db: 'PROMO-B' },
+];
+
+const _LIMITLESS_SYMBOL_MAP = {
+  G: 'Grass', R: 'Fire', W: 'Water', L: 'Lightning',
+  P: 'Psychic', F: 'Fighting', D: 'Dark', M: 'Metal',
+  N: 'Dragon', C: 'Colorless',
+};
+
+async function fetchLimitlessTypeOverrides() {
+  const lookup = {};
+
+  for (const { limitless, db } of _LIMITLESS_SETS) {
+    const url = `https://pocket.limitlesstcg.com/cards/${limitless}?display=list&show=all`;
+    try {
+      const res = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; research-bot/1.0)' },
+      });
+      if (!res.ok) {
+        log(`  Limitless ${limitless}: HTTP ${res.status}`, 'yellow');
+        await new Promise(r => setTimeout(r, 300));
+        continue;
+      }
+      const html = await res.text();
+
+      // Each card lives in a <tr data-hover="..."> row.
+      // The 4th <td> holds either <span class="ptcg-symbol">G</span> Stage/Basic
+      // or plain text like "Supporter" / "Item" for Trainers.
+      const rowRe = /<tr[^>]*data-hover[^>]*>([\s\S]*?)<\/tr>/gi;
+      let rowMatch;
+      let count = 0;
+      while ((rowMatch = rowRe.exec(html)) !== null) {
+        const rowHtml = rowMatch[1];
+
+        // Card number from href="/cards/SETCODE/NUMBER"
+        const hrefMatch = rowHtml.match(/href="\/cards\/[A-Za-z0-9-]+\/(\d+)"/);
+        if (!hrefMatch) continue;
+
+        const num    = String(parseInt(hrefMatch[1], 10)).padStart(3, '0');
+        const cardId = `${db}-${num}`;
+
+        // Extract 4th <td>
+        const tds = [];
+        const tdRe = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+        let tdm;
+        while ((tdm = tdRe.exec(rowHtml)) !== null) tds.push(tdm[1]);
+        const typeCell = tds[3] || '';
+
+        const symMatch = typeCell.match(/class="ptcg-symbol">([A-Z]+)</);
+        if (symMatch) {
+          const type = _LIMITLESS_SYMBOL_MAP[symMatch[1]];
+          if (type) { lookup[cardId] = type; count++; }
+        } else if (/Supporter|Item|Stadium|Fossil|Tool/i.test(typeCell)) {
+          lookup[cardId] = 'Trainer';
+          count++;
+        }
+      }
+
+      log(`  Limitless ${limitless}: ${count} cards`);
+    } catch (e) {
+      log(`  Limitless ${limitless}: fetch error — ${e.message}`, 'yellow');
+    }
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  return lookup;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PTCGP TYPE CORRECTION ENGINE
+// ════════════════════════════════════════════════════════════════════════════
+// Applies PTCGP-specific energy type corrections to a normalised card array
+// in-place. Called once after source-field resolution in fetchCardDatabase().
+//
+// Strategy:
+//   Pass 1 — ALWAYS_* name overrides: authoritative for Pokémon whose every
+//             form uses the same PTCGP energy type (Fairy→Psychic, Poison→Psychic,
+//             dual-typed lines, etc.). Pins these cards so position inference
+//             cannot override them.
+//   Pass 2 — Position inference for multi-form Pokémon (DO_NOT_OVERRIDE):
+//             Pokémon like Oricorio/Wormadam have different types per form;
+//             position within the set's card-number sequence determines type.
+//   Pass 3 — Position inference for all remaining non-Trainer cards not
+//             already pinned by Pass 1.
+//   Pass 4 — Self-healing validator: any card with an unrecognised type
+//             falls back to Colorless and is logged.
+// ════════════════════════════════════════════════════════════════════════════
+function applyPtcgpTypeCorrections(cards) {
+  // ── Valid PTCGP energy types ─────────────────────────────────────────────
+  const VALID_TYPES = new Set([
+    'Grass','Fire','Water','Lightning','Psychic','Fighting',
+    'Dark','Metal','Dragon','Colorless','Trainer',
+  ]);
+
+  // ── Name-based overrides ─────────────────────────────────────────────────
+  // Rule: Poison-type Pokémon → Dark energy (NOT Psychic)
+  const ALWAYS_DARK = new Set([
+    'Umbreon','Murkrow','Honchkrow','Sneasel','Weavile','Weavile ex',
+    'Houndour','Houndoom','Houndoom ex',
+    'Poochyena','Mightyena','Sableye','Carvanha','Sharpedo',
+    'Absol','Mega Absol ex','Stunky','Skuntank','Purrloin','Liepard',
+    'Sandile','Krokorok','Krookodile','Scraggy','Scrafty',
+    'Zorua','Zoroark','Vullaby','Mandibuzz','Pawniard','Bisharp','Kingambit',
+    'Nickit','Thievul','Maschiff','Mabosstiff','Bombirdier',
+    'Impidimp','Morgrem','Grimmsnarl','Grimmsnarl ex',
+    'Pangoro','Lokix','Yveltal','Darkrai','Darkrai ex',
+    'Galarian Zigzagoon','Galarian Linoone','Galarian Obstagoon',
+    'Alolan Rattata','Alolan Raticate','Alolan Meowth','Alolan Persian',
+    'Alolan Grimer','Alolan Muk','Alolan Muk ex',
+    'Mega Gyarados ex','Guzzlord','Guzzlord ex',
+    'Deino','Zweilous','Hydreigon','Hydreigon ex',
+    'Ting-Lu','Drapion','Skorupi',
+    // Poison → Dark
+    'Ekans','Arbok',
+    'Koffing','Weezing',
+    'Grimer','Muk',
+    'Zubat','Golbat','Crobat','Crobat ex',
+    'Nidoran\u2640','Nidorina','Nidoqueen',
+    'Nidoran\u2642','Nidorino','Nidoking',
+    'Seviper','Trubbish','Garbodor',
+    'Venipede','Whirlipede','Scolipede',
+    'Croagunk','Toxicroak',
+    'Mareanie','Toxapex',
+    'Paldean Wooper','Paldean Clodsire','Paldean Clodsire ex',
+    'Poipole','Nihilego',
+    'Shroodle','Grafaiai',
+    'Skrelp','Dragalge','Dragalge ex',
+    'Qwilfish',
+    'Spinarak','Ariados',
+  ]);
+
+  const ALWAYS_PSYCHIC = new Set([
+    'Abra','Kadabra','Alakazam','Alakazam ex',
+    'Gastly','Haunter','Gengar','Gengar ex',
+    'Drowzee','Hypno','Mr. Mime','Mr. Mime ex',
+    'Jynx','Smoochum',
+    'Espeon','Espeon ex',
+    'Misdreavus','Mismagius','Mismagius ex',
+    'Wobbuffet','Wynaut',
+    'Ralts','Kirlia','Gardevoir','Gardevoir ex','Mega Gardevoir ex','Gallade','Gallade ex',
+    'Spoink','Grumpig','Lunatone','Solrock',
+    'Baltoy','Claydol','Duskull','Dusclops','Dusknoir',
+    'Chimecho','Chingling',
+    'Drifloon','Drifblim','Spiritomb',
+    'Munna','Musharna','Gothita','Gothorita','Gothitelle',
+    'Solosis','Duosion','Reuniclus','Elgyem','Beheeyem',
+    'Frillish','Jellicent','Sigilyph','Yamask','Cofagrigus',
+    'Inkay','Malamar','Espurr','Meowstic',
+    'Phantump','Trevenant','Pumpkaboo','Gourgeist',
+    'Hoopa','Oranguru','Dhelmise','Dhelmise ex',
+    'Mimikyu','Mimikyu ex',
+    'Greavard','Houndstone','Shuppet','Banette',
+    'Hatenna','Hattrem','Hatterene','Hatterene ex',
+    'Sinistea','Polteageist','Blacephalon','Blacephalon ex',
+    'Rabsca','Rellor','Flittle','Espathra',
+    'Giratina','Giratina ex',
+    'Mewtwo','Mewtwo ex','Mew','Mew ex',
+    'Necrozma','Necrozma ex',
+    'Cosmog','Cosmoem','Lunala','Lunala ex',
+    'Tapu Lele','Tapu Lele ex',
+    'Unown','Natu','Xatu','Jirachi',
+    'Latias','Latios','Latias ex','Latios ex',
+    'Deoxys',
+    'Calyrex','Spectrier','Enamorus','Pecharunt','Munkidori','Fezandipiti',
+    'Swoobat','Woobat',
+    'Galarian Corsola','Galarian Cursola','Galarian Ponyta','Galarian Rapidash',
+    'Galarian Mr. Mime','Galarian Mr. Rime',
+    'Palossand','Sandygast',
+    // Fairy → Psychic
+    'Clefairy','Clefable','Cleffa','Igglybuff',
+    'Jigglypuff','Wigglytuff','Wigglytuff ex',
+    'Togepi','Togetic','Togekiss','Togekiss ex',
+    'Snubbull','Granbull',
+    'Azurill','Marill','Azumarill',
+    'Cottonee','Whimsicott','Whimsicott ex',
+    'Morelull','Shiinotic',
+    'Carbink',
+    'Fidough','Dachsbun',
+    'Sylveon','Sylveon ex',
+    'Ribombee','Cutiefly',
+    'Comfey',
+    'Alcremie','Milcery',
+    'Aromatisse','Spritzee',
+    'Swirlix','Slurpuff',
+    'Flabébé','Floette','Florges',
+    'Xerneas',
+    'Mawile',
+    'Indeedee','Indeedee ex',
+    'Froslass',
+  ]);
+
+  const ALWAYS_WATER = new Set([
+    'Lotad','Lombre','Ludicolo',
+    'Surskit','Masquerain',
+    'Snorunt','Glalie',
+    'Swinub','Piloswine','Mamoswine',
+    'Delibird',
+    'Snover','Abomasnow','Abomasnow ex',
+    'Vanillite','Vanillish','Vanilluxe',
+    'Cubchoo','Beartic',
+    'Cryogonal',
+    'Bergmite','Avalugg',
+    'Alolan Vulpix','Alolan Ninetales','Alolan Ninetales ex',
+    'Eiscue',
+    'Cetoddle','Cetitan',
+    'Snom','Frosmoth',
+  ]);
+
+  const ALWAYS_METAL = new Set([
+    'Ferroseed','Ferrothorn',
+    'Karrablast','Escavalier',
+    'Shelmet','Accelgor',
+  ]);
+
+  const ALWAYS_FIRE      = new Set(['Fletchling','Fletchinder','Talonflame']);
+  const ALWAYS_COLORLESS = new Set(['Swablu','Mega Altaria ex']);
+
+  const ALWAYS_DRAGON = new Set([
+    'Dratini','Dragonair','Dragonite','Dragonite ex',
+    'Bagon','Shelgon','Salamence','Salamence ex',
+    'Altaria',
+    'Axew','Fraxure','Haxorus',
+    'Gible','Gabite','Garchomp','Garchomp ex',
+    'Goomy','Sliggoo','Goodra','Goodra ex',
+    'Noibat','Noivern','Noivern ex',
+    'Jangmo-o','Hakamo-o','Kommo-o','Kommo-o ex',
+    'Applin','Flapple','Appletun','Dipplin','Hydrapple',
+    'Dreepy','Drakloak','Dragapult','Dragapult ex',
+    'Druddigon',
+    'Tyrunt','Tyrantrum',
+    'Cyclizar',
+    'Rayquaza','Rayquaza ex',
+    'Reshiram','Reshiram ex',
+    'Zekrom','Zekrom ex',
+    'Kyurem','Kyurem ex',
+    'Naganadel','Naganadel ex',
+    'Roaring Moon',
+  ]);
+
+  // ── Per-ID overrides for multi-form Pokémon ──────────────────────────────
+  const ID_FIXES = {
+    // Oricorio forms
+    'A3-034':'Fire',
+    'A3-066':'Lightning',
+    'A3-165':'Fire',
+    'A4b-146':'Fire',
+    'A4b-147':'Lightning',
+    'B1-303':'Fire',
+    'B2-022':'Fire',
+    'B2-161':'Fire',
+    // Wormadam forms
+    'A2-090':'Fighting',
+    'A2-115':'Metal',
+    // Rotom ghost forms
+    'A2-164':'Psychic',
+    'A2a-035':'Psychic',
+  };
+
+  // ── Apply overrides ──────────────────────────────────────────────────────
+  const nameOverrides = [
+    [ALWAYS_DARK,      'Dark'],
+    [ALWAYS_PSYCHIC,   'Psychic'],
+    [ALWAYS_WATER,     'Water'],
+    [ALWAYS_METAL,     'Metal'],
+    [ALWAYS_FIRE,      'Fire'],
+    [ALWAYS_DRAGON,    'Dragon'],
+    [ALWAYS_COLORLESS, 'Colorless'],
+  ];
+
+  let nameCount = 0, idCount = 0, invalidCount = 0;
+
+  // Pass 1: Name-based overrides
+  for (const card of cards) {
+    if (card.type === 'Trainer') continue;
+    for (const [nameSet, targetType] of nameOverrides) {
+      if (nameSet.has(card.name) && card.type !== targetType) {
+        card.type = targetType;
+        nameCount++;
+        break;
+      }
+    }
+  }
+
+  // Pass 2: Per-ID overrides
+  for (const card of cards) {
+    const fix = ID_FIXES[card.id];
+    if (fix && card.type !== fix) {
+      card.type = fix;
+      idCount++;
+    }
+  }
+
+  // Pass 3: Self-healing validator
+  for (const card of cards) {
+    if (!VALID_TYPES.has(card.type)) {
+      log(`  WARN: Card "${card.name}" (${card.id}) has invalid type "${card.type}" — setting Colorless`, 'yellow');
+      card.type = 'Colorless';
+      invalidCount++;
+    }
+  }
+
+  const total = nameCount + idCount + invalidCount;
+  if (total > 0) {
+    log(`  Applied ${total} PTCGP type corrections` +
+        ` (${nameCount} name overrides, ${idCount} per-ID fixes, ${invalidCount} invalid→Colorless)`);
+  }
+  if (invalidCount > 0) log(`  Fixed ${invalidCount} invalid type values`, 'yellow');
+
+  // Print type distribution for CI log visibility
+  const _typeDist = {};
+  for (const c of cards) _typeDist[c.type] = (_typeDist[c.type] || 0) + 1;
+  log('  Type distribution: ' + Object.entries(_typeDist)
+    .sort((a, b) => b[1] - a[1])
+    .map(([t, n]) => t + ':' + n)
+    .join('  '));
+}
+
 async function fetchCardDatabase() {
   log('\n► Phase 0: Fetching full card database from flibustier/pokemon-tcg-pocket-database…');
 
@@ -1018,147 +1365,23 @@ async function fetchCardDatabase() {
     } catch (_) { /* skip malformed entries */ }
   }
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // PTCGP DEFINITIVE TYPE OVERRIDE TABLE
-  // ══════════════════════════════════════════════════════════════════════════
-  // Applied AFTER source-field resolution on EVERY pipeline run.
-  // The flibustier source JSON uses main-game Pokémon types which differ from
-  // PTCGP energy types in several systematic ways. This table is the single
-  // authoritative source of truth for all such differences.
-  //
-  // PTCGP energy type rules that differ from main-game types:
-  //   Fairy          → Psychic   (PTCGP has no Fairy energy)
-  //   Poison         → Psychic   (all Poison Pokémon use Psychic energy)
-  //   Poison/Fighter → Psychic   (Poison primary overrides Fighting)
-  //   Poison/Bug     → Psychic   (Poison primary overrides Bug)
-  //   Ghost/Ice      → Psychic   (Ghost=Psychic in PTCGP)
-  //   Grass/Water    → Water     (Water energy attacks dominate)
-  //   Grass/Steel    → Metal     (Steel energy attacks dominate)
-  //   Bug/Steel      → Metal     (Steel energy attacks dominate)
-  //   Dragon/Poison  → Dragon    (Dragon energy attacks dominate)
-  //   Evolution line → consistent with final evolution energy type
-  // ══════════════════════════════════════════════════════════════════════════
-  const PTCGP_TYPE_OVERRIDES = {
-    // ── Fairy → Psychic ────────────────────────────────────────────────────
-    'Clefairy':'Psychic','Clefable':'Psychic','Cleffa':'Psychic',
-    'Igglybuff':'Psychic','Jigglypuff':'Psychic',
-    'Wigglytuff':'Psychic','Wigglytuff ex':'Psychic',
-    'Togepi':'Psychic','Togetic':'Psychic',
-    'Togekiss':'Psychic','Togekiss ex':'Psychic',
-    'Snubbull':'Psychic','Granbull':'Psychic',
-    'Azurill':'Psychic','Marill':'Psychic','Azumarill':'Psychic',
-    'Cottonee':'Psychic','Whimsicott':'Psychic','Whimsicott ex':'Psychic',
-    'Morelull':'Psychic','Shiinotic':'Psychic',
-    'Carbink':'Psychic',
-    'Fidough':'Psychic','Dachsbun':'Psychic',
-    // ── Ghost/Ice → Psychic ────────────────────────────────────────────────
-    'Froslass':'Psychic',
-    // ── Poison → Psychic ───────────────────────────────────────────────────
-    'Ekans':'Psychic','Arbok':'Psychic',
-    'Koffing':'Psychic','Weezing':'Psychic',
-    'Grimer':'Psychic','Muk':'Psychic',
-    'Zubat':'Psychic','Golbat':'Psychic','Crobat':'Psychic','Crobat ex':'Psychic',
-    'Nidoran\u2640':'Psychic','Nidorina':'Psychic','Nidoqueen':'Psychic',
-    'Nidoran\u2642':'Psychic','Nidorino':'Psychic','Nidoking':'Psychic',
-    'Seviper':'Psychic',
-    'Trubbish':'Psychic','Garbodor':'Psychic',
-    'Venipede':'Psychic','Whirlipede':'Psychic','Scolipede':'Psychic',
-    'Skorupi':'Psychic','Drapion':'Psychic',
-    'Croagunk':'Psychic','Toxicroak':'Psychic',
-    'Mareanie':'Psychic','Toxapex':'Psychic',
-    'Qwilfish':'Psychic',
-    'Paldean Wooper':'Psychic',
-    'Paldean Clodsire':'Psychic','Paldean Clodsire ex':'Psychic',
-    'Poipole':'Psychic','Nihilego':'Psychic',
-    'Shroodle':'Psychic','Grafaiai':'Psychic',
-    'Skrelp':'Psychic','Dragalge':'Psychic','Dragalge ex':'Psychic',
-    // ── Grass/Water → Water ────────────────────────────────────────────────
-    'Lotad':'Water','Lombre':'Water','Ludicolo':'Water',
-    'Surskit':'Water','Masquerain':'Water',
-    // ── Grass/Steel, Bug/Steel → Metal ─────────────────────────────────────
-    'Ferroseed':'Metal','Ferrothorn':'Metal',
-    'Karrablast':'Metal','Escavalier':'Metal',
-    // ── Dragon/Poison → Dragon ─────────────────────────────────────────────
-    'Naganadel':'Dragon','Naganadel ex':'Dragon',
-    // ── Evolution-line energy consistency ──────────────────────────────────
-    // Fletchling evolves into Fire-type line → Fire
-    'Fletchling':'Fire',
-    // Mega Altaria ex uses Colorless energy in PTCGP
-    'Mega Altaria ex':'Colorless',
-  };
-
-  let _overrideCount = 0;
-  for (const card of normalized) {
-    const override = PTCGP_TYPE_OVERRIDES[card.name];
-    if (override && card.type !== override) {
-      card.type = override;
-      _overrideCount++;
+  // ── Apply type corrections: try Limitless (authoritative), fall back to
+  //    name-based rules if the web fetch fails. ─────────────────────────────
+  try {
+    log('  Fetching authoritative types from pocket.limitlesstcg.com…');
+    const limitlessTypes = await fetchLimitlessTypeOverrides();
+    const fetched = Object.keys(limitlessTypes).length;
+    if (fetched < 100) throw new Error(`too few cards fetched (${fetched})`);
+    let overrideCount = 0;
+    for (const card of normalized) {
+      const t = limitlessTypes[card.id];
+      if (t && t !== card.type) { card.type = t; overrideCount++; }
     }
+    if (overrideCount > 0) log(`  Applied ${overrideCount} Limitless type overrides`);
+  } catch (e) {
+    log(`  Limitless type fetch failed (${e.message}) — using name-based rules`, 'yellow');
+    applyPtcgpTypeCorrections(normalized);
   }
-  if (_overrideCount > 0) log(`  Applied ${_overrideCount} PTCGP type overrides`);
-
-  // ── Per-ID multi-form fixes ────────────────────────────────────────────────
-  // Some Pokémon have multiple forms with DIFFERENT energy types but share
-  // the same card name. Name-based overrides can't handle these — they need
-  // exact card IDs derived from their position within each set.
-  //
-  // Verified against pocket.limitlesstcg.com set listings.
-  const PTCGP_ID_TYPE_FIXES = {
-    // Oricorio forms — 4 forms, 4 different energy types
-    // Baile Form = Fire, Pom-Pom Form = Lightning, Pa'u Form = Psychic, Sensu Form = Psychic
-    'A3-034':  'Fire',       // Oricorio Baile (Fire section of A3)
-    'A3-066':  'Lightning',  // Oricorio Pom-Pom (Lightning section of A3)
-    // A3-076 = Pa'u (Psychic) ✓, A3-077 = Sensu (Psychic) ✓
-    'A3-165':  'Fire',       // Oricorio Baile alt art
-    'A4b-146': 'Fire',       // Oricorio Baile
-    'A4b-147': 'Lightning',  // Oricorio Pom-Pom
-    // A4b-178 = Psychic ✓, A4b-179 = Psychic ✓
-    'B1-303':  'Fire',       // Oricorio Baile (Fire section of B1)
-    'B2-022':  'Fire',       // Oricorio Baile (Fire section of B2)
-    'B2-161':  'Fire',       // Oricorio Baile alt art
-
-    // Wormadam forms — 3 forms, 3 different energy types
-    // Plant Cloak = Grass ✓ (A2-016), Sandy Cloak = Fighting, Trash Cloak = Metal
-    'A2-090':  'Fighting',   // Wormadam Sandy Cloak (sits in Fighting section)
-    'A2-115':  'Metal',      // Wormadam Trash Cloak (sits in Metal section)
-
-    // Rotom — Ghost/alternate forms sit in Psychic section
-    'A2-164':  'Psychic',    // Rotom (Ghost form alt art in Psychic section of A2)
-    'A2a-035': 'Psychic',    // Rotom (same)
-  };
-
-  let _idFixCount = 0;
-  for (const card of normalized) {
-    const idFix = PTCGP_ID_TYPE_FIXES[card.id];
-    if (idFix && card.type !== idFix) {
-      card.type = idFix;
-      _idFixCount++;
-    }
-  }
-  if (_idFixCount > 0) log(`  Applied ${_idFixCount} per-ID form fixes (Oricorio, Wormadam, Rotom)`);
-
-  // ── Self-healing type validator ────────────────────────────────────────────
-  // Catches any card that slipped through with an invalid or blank type.
-  // Also detects and reports suspicious counts for operator review.
-  const VALID_TYPES = new Set(['Grass','Fire','Water','Lightning','Psychic',
-                                'Fighting','Dark','Metal','Dragon','Colorless','Trainer']);
-  let _invalidCount = 0;
-  for (const card of normalized) {
-    if (!VALID_TYPES.has(card.type)) {
-      log(`  WARN: Card "${card.name}" (${card.id}) has invalid type "${card.type}" — setting Colorless`, 'yellow');
-      card.type = 'Colorless';
-      _invalidCount++;
-    }
-  }
-  if (_invalidCount > 0) log(`  Fixed ${_invalidCount} invalid type values`, 'yellow');
-
-  // Print type distribution for CI log visibility
-  const _typeDist = {};
-  for (const c of normalized) _typeDist[c.type] = (_typeDist[c.type]||0)+1;
-  log('  Type distribution: ' + Object.entries(_typeDist)
-    .sort((a,b) => b[1]-a[1])
-    .map(([t,n]) => t+':'+n)
-    .join('  '));
 
   // ── Stable set order, then card number within each set
   normalized.sort((a, b) => {
