@@ -1033,14 +1033,32 @@ async function fetchCardDatabase() {
     'Karrablast':'Metal','Escavalier':'Metal',
     // Fairy-type -> Psychic energy in PTCGP (no Fairy energy)
     'Clefairy':'Psychic','Clefable':'Psychic','Cleffa':'Psychic',
-    'Jigglypuff':'Psychic','Wigglytuff':'Psychic','Wigglytuff ex':'Psychic',
+    'Igglybuff':'Psychic','Jigglypuff':'Psychic','Wigglytuff':'Psychic','Wigglytuff ex':'Psychic',
     'Togepi':'Psychic','Togetic':'Psychic','Togekiss':'Psychic','Togekiss ex':'Psychic',
     'Snubbull':'Psychic','Granbull':'Psychic',
-    'Marill':'Psychic','Azumarill':'Psychic',
+    'Azurill':'Psychic','Marill':'Psychic','Azumarill':'Psychic',
     'Cottonee':'Psychic','Whimsicott':'Psychic','Whimsicott ex':'Psychic',
     'Morelull':'Psychic','Shiinotic':'Psychic',
-    'Carbink':'Psychic',
+    'Carbink':'Psychic','Fidough':'Psychic','Dachsbun':'Psychic',
     'Froslass':'Psychic',  // Ghost/Ice -> Psychic (Ghost energy = Psychic)
+    // Poison-type -> Psychic energy in PTCGP (all Poison types use Psychic energy)
+    'Ekans':'Psychic','Arbok':'Psychic',
+    'Koffing':'Psychic','Weezing':'Psychic',
+    'Grimer':'Psychic','Muk':'Psychic',
+    'Seviper':'Psychic','Trubbish':'Psychic','Garbodor':'Psychic',
+    'Zubat':'Psychic','Golbat':'Psychic','Crobat':'Psychic','Crobat ex':'Psychic',
+    'Nidoran\u2640':'Psychic','Nidorina':'Psychic','Nidoqueen':'Psychic',
+    'Nidoran\u2642':'Psychic','Nidorino':'Psychic','Nidoking':'Psychic',
+    'Mareanie':'Psychic','Toxapex':'Psychic','Qwilfish':'Psychic',
+    'Toxicroak':'Psychic',
+    'Venipede':'Psychic','Whirlipede':'Psychic','Scolipede':'Psychic',
+    'Paldean Wooper':'Psychic',
+    'Paldean Clodsire':'Psychic','Paldean Clodsire ex':'Psychic',
+    'Poipole':'Psychic','Nihilego':'Psychic',
+    'Shroodle':'Psychic','Grafaiai':'Psychic',
+    'Skrelp':'Psychic','Dragalge':'Psychic','Dragalge ex':'Psychic',
+    // Dragon/Poison -> Dragon energy in PTCGP
+    'Naganadel':'Dragon','Naganadel ex':'Dragon',
   };
   for (const card of normalized) {
     const override = PTCGP_TYPE_OVERRIDES[card.name];
