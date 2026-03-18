@@ -421,7 +421,7 @@ const POKEMON_NAME_TYPE_MAP = {
   'Petilil':'Grass','Lilligant':'Grass',
   'Maractus':'Grass',
   'Foongus':'Grass','Amoonguss':'Grass',
-  'Ferroseed':'Grass','Ferrothorn':'Grass',
+  'Ferroseed':'Metal','Ferrothorn':'Metal',
   'Chespin':'Grass','Quilladin':'Grass','Chesnaught':'Grass','Chesnaught ex':'Grass',
   'Skiddo':'Grass','Gogoat':'Grass',
   'Rowlet':'Grass','Dartrix':'Grass','Decidueye':'Grass','Decidueye ex':'Grass',
@@ -488,7 +488,7 @@ const POKEMON_NAME_TYPE_MAP = {
   'Kabuto':'Water','Kabutops':'Water',
   'Articuno':'Water','Articuno ex':'Water',
   'Totodile':'Water','Croconaw':'Water','Feraligatr':'Water',
-  'Marill':'Water','Azumarill':'Water',
+  'Marill':'Psychic','Azumarill':'Psychic',
   'Wooper':'Water','Quagsire':'Water',
   'Corsola':'Water',
   'Remoraid':'Water','Octillery':'Water',
@@ -738,8 +738,8 @@ const POKEMON_NAME_TYPE_MAP = {
   'Pidgey':'Colorless','Pidgeotto':'Colorless','Pidgeot':'Colorless','Pidgeot ex':'Colorless',
   'Rattata':'Colorless','Raticate':'Colorless',
   'Spearow':'Colorless','Fearow':'Colorless',
-  'Clefairy':'Colorless','Clefable':'Colorless','Cleffa':'Colorless',
-  'Jigglypuff':'Colorless','Wigglytuff':'Colorless','Wigglytuff ex':'Colorless',
+  'Clefairy':'Psychic','Clefable':'Psychic','Cleffa':'Psychic',
+  'Jigglypuff':'Psychic','Wigglytuff':'Psychic','Wigglytuff ex':'Psychic',
   'Meowth':'Colorless','Persian':'Colorless',
   "Farfetch'd":'Colorless',
   'Doduo':'Colorless','Dodrio':'Colorless',
@@ -750,7 +750,7 @@ const POKEMON_NAME_TYPE_MAP = {
   'Eevee':'Colorless',
   'Snorlax':'Colorless','Snorlax ex':'Colorless',
   'Ditto':'Colorless',
-  'Togepi':'Colorless','Togetic':'Colorless','Togekiss':'Colorless','Togekiss ex':'Colorless',
+  'Togepi':'Psychic','Togetic':'Psychic','Togekiss':'Psychic','Togekiss ex':'Psychic',
   'Aipom':'Colorless','Ambipom':'Colorless',
   'Girafarig':'Colorless',
   'Stantler':'Colorless',
@@ -820,14 +820,18 @@ const POKEMON_NAME_TYPE_MAP = {
   // → Grass
   'Bellossom':'Grass','Breloom':'Grass','Carnivine':'Grass',
   'Hoppip':'Grass','Jumpluff':'Grass','Jumpluff ex':'Grass',
-  'Karrablast':'Grass','Leafeon':'Grass','Leafeon ex':'Grass',
-  'Morelull':'Grass','Mothim':'Grass','Mow Rotom':'Grass',
+  'Karrablast':'Metal','Leafeon':'Grass','Leafeon ex':'Grass',
+  'Morelull':'Psychic','Mothim':'Grass','Mow Rotom':'Grass',
   'Pansage':'Grass','Scatterbug':'Grass','Seedot':'Grass',
-  'Serperior':'Grass','Servine':'Grass','Shiinotic':'Grass',
+  'Serperior':'Grass','Servine':'Grass','Shiinotic':'Psychic',
   'Shroomish':'Grass','Simisage':'Grass','Skiploom':'Grass',
   'Snivy':'Grass','Spewpa':'Grass','Tangrowth':'Grass',
   'Teal Mask Ogerpon ex':'Grass','Virizion':'Grass','Vivillon':'Grass',
   'Mega Pinsir ex':'Grass','Mega Venusaur ex':'Grass',
+  // Fairy-type Pokémon not listed above -> Psychic in PTCGP
+  'Cottonee':'Psychic','Whimsicott':'Psychic','Whimsicott ex':'Psychic',
+  'Snubbull':'Psychic','Granbull':'Psychic',
+  'Froslass':'Psychic',
   // → Fire
   'Alolan Marowak':'Fire','Carkol':'Fire','Coalossal':'Fire',
   'Heat Rotom':'Fire','Hearthflame Mask Ogerpon':'Fire',
@@ -872,7 +876,7 @@ const POKEMON_NAME_TYPE_MAP = {
   'Venipede':'Psychic','Whirlipede':'Psychic','Xerneas':'Psychic',
   // → Fighting
   'Aerodactyl':'Fighting','Aerodactyl ex':'Fighting',
-  'Carbink':'Fighting','Cornerstone Mask Ogerpon':'Fighting',
+  'Carbink':'Psychic','Cornerstone Mask Ogerpon':'Fighting',
   'Cranidos':'Fighting','Crustle':'Fighting',
   'Donphan':'Fighting','Donphan ex':'Fighting','Dwebble':'Fighting',
   'Gligar':'Fighting','Gliscor':'Fighting','Hawlucha':'Fighting',
@@ -1014,7 +1018,36 @@ async function fetchCardDatabase() {
     } catch (_) { /* skip malformed entries */ }
   }
 
-  // Stable set order, then card number within each set
+  // ── PTCGP-specific type overrides ────────────────────────────────────────
+  // Applied AFTER source-field resolution. These correct cases where the
+  // source JSON uses main-game typings that differ from PTCGP energy types.
+  // e.g. Lotad is Grass/Water in main games but uses Water energy in PTCGP.
+  // Fairy-type Pokémon always use Psychic energy in PTCGP (no Fairy type).
+  const PTCGP_TYPE_OVERRIDES = {
+    // Grass/Water dual -> Water energy in PTCGP
+    'Lotad':'Water','Lombre':'Water','Ludicolo':'Water',
+    'Surskit':'Water','Masquerain':'Water',
+    'Panpour':'Water','Simipour':'Water',
+    // Grass/Steel or Bug/Steel -> Metal energy in PTCGP
+    'Ferroseed':'Metal','Ferrothorn':'Metal',
+    'Karrablast':'Metal','Escavalier':'Metal',
+    // Fairy-type -> Psychic energy in PTCGP (no Fairy energy)
+    'Clefairy':'Psychic','Clefable':'Psychic','Cleffa':'Psychic',
+    'Jigglypuff':'Psychic','Wigglytuff':'Psychic','Wigglytuff ex':'Psychic',
+    'Togepi':'Psychic','Togetic':'Psychic','Togekiss':'Psychic','Togekiss ex':'Psychic',
+    'Snubbull':'Psychic','Granbull':'Psychic',
+    'Marill':'Psychic','Azumarill':'Psychic',
+    'Cottonee':'Psychic','Whimsicott':'Psychic','Whimsicott ex':'Psychic',
+    'Morelull':'Psychic','Shiinotic':'Psychic',
+    'Carbink':'Psychic',
+    'Froslass':'Psychic',  // Ghost/Ice -> Psychic (Ghost energy = Psychic)
+  };
+  for (const card of normalized) {
+    const override = PTCGP_TYPE_OVERRIDES[card.name];
+    if (override) card.type = override;
+  }
+
+  // ── Stable set order, then card number within each set
   normalized.sort((a, b) => {
     if (a.setCode < b.setCode) return -1;
     if (a.setCode > b.setCode) return  1;

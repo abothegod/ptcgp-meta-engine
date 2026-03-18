@@ -1,0 +1,113 @@
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║      PTCGP Meta Engine — Bi-Weekly Auto-Update Workflow         ║
+# ║                                                                  ║
+# ║  File: .github/workflows/update-meta.yml                        ║
+# ║                                                                  ║
+# ║  Runs automatically on the 1st and 15th of every month at 09:00 ║
+# ║  UTC, or manually via the Actions tab ("Run workflow" button).   ║
+# ║                                                                  ║
+# ║  What it does:                                                   ║
+# ║    1. Fetches tournament data from Limitless + ptcgpocket.gg     ║
+# ║    2. Runs the Strategy Engine to score and rank archetypes      ║
+# ║    3. Builds optimal 20-card lists for the top 20 decks          ║
+# ║    4. Patches CARD_REGISTRY + META_SNAPSHOT inside the HTML file ║
+# ║    5. Commits the updated HTML back to the repository            ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+name: Bi-Weekly Meta Update
+
+on:
+  # Run on the 1st and 15th of every month at 09:00 UTC
+  schedule:
+    - cron: '0 9 1,15 * *'
+
+  # Allow manual trigger from the GitHub Actions tab
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run — fetch and score, but do NOT commit changes'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  update-meta:
+    name: Update PTCGP Meta Data
+    runs-on: ubuntu-latest
+
+    # Prevent concurrent runs (e.g. if manually triggered while scheduled run is in progress)
+    concurrency:
+      group: meta-update
+      cancel-in-progress: false
+
+    steps:
+      # ── Checkout ──────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Need full history so the commit step works
+          fetch-depth: 1
+
+      # ── Node.js ───────────────────────────────────────────────
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          # No npm install needed — script uses only Node built-ins
+
+      # ── Run the Intelligence Engine ───────────────────────────
+      - name: Run meta intelligence engine
+        run: node update-meta.js
+        env:
+          # These are passed in case future versions of the script
+          # need API keys (e.g. Limitless premium API)
+          LIMITLESS_API_KEY: ${{ secrets.LIMITLESS_API_KEY }}
+
+      # ── Validate the patched HTML ─────────────────────────────
+      - name: Validate output
+        run: |
+          echo "── Checking file was modified ──"
+          git diff --stat ptcgp-meta-engine.html
+
+          echo "── Checking META_SNAPSHOT is present ──"
+          grep -c "META_SNAPSHOT" ptcgp-meta-engine.html | grep -v "^0$" || \
+            (echo "ERROR: META_SNAPSHOT missing from HTML" && exit 1)
+
+          echo "── Checking CARD_REGISTRY is present ──"
+          grep -c "CARD_REGISTRY" ptcgp-meta-engine.html | grep -v "^0$" || \
+            (echo "ERROR: CARD_REGISTRY missing from HTML" && exit 1)
+
+          echo "── Deck count ──"
+          grep -c '"tier":'  ptcgp-meta-engine.html || true
+
+          echo "✓ Validation passed"
+
+      # ── Commit & Push (skipped on dry run) ────────────────────
+      - name: Commit updated HTML
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: |
+          git config user.name  "PTCGP Meta Bot"
+          git config user.email "meta-bot@users.noreply.github.com"
+
+          # Only commit if there are actual changes
+          if git diff --quiet ptcgp-meta-engine.html; then
+            echo "No changes to commit — meta data unchanged."
+          else
+            DECK_COUNT=$(grep -c '"tier":' ptcgp-meta-engine.html || echo "?")
+            DATE=$(date -u '+%Y-%m-%d')
+            git add ptcgp-meta-engine.html
+            git commit -m "chore(meta): bi-weekly update ${DATE} — ${DECK_COUNT} decks"
+            git push
+            echo "✓ Committed and pushed."
+          fi
+
+      # ── Dry run summary ───────────────────────────────────────
+      - name: Dry run summary
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        run: |
+          echo "DRY RUN — changes NOT committed."
+          echo "Diff preview:"
+          git diff ptcgp-meta-engine.html | head -80
