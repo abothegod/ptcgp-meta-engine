@@ -1018,52 +1018,107 @@ async function fetchCardDatabase() {
     } catch (_) { /* skip malformed entries */ }
   }
 
-  // ── PTCGP-specific type overrides ────────────────────────────────────────
-  // Applied AFTER source-field resolution. These correct cases where the
-  // source JSON uses main-game typings that differ from PTCGP energy types.
-  // e.g. Lotad is Grass/Water in main games but uses Water energy in PTCGP.
-  // Fairy-type Pokémon always use Psychic energy in PTCGP (no Fairy type).
+  // ══════════════════════════════════════════════════════════════════════════
+  // PTCGP DEFINITIVE TYPE OVERRIDE TABLE
+  // ══════════════════════════════════════════════════════════════════════════
+  // Applied AFTER source-field resolution on EVERY pipeline run.
+  // The flibustier source JSON uses main-game Pokémon types which differ from
+  // PTCGP energy types in several systematic ways. This table is the single
+  // authoritative source of truth for all such differences.
+  //
+  // PTCGP energy type rules that differ from main-game types:
+  //   Fairy          → Psychic   (PTCGP has no Fairy energy)
+  //   Poison         → Psychic   (all Poison Pokémon use Psychic energy)
+  //   Poison/Fighter → Psychic   (Poison primary overrides Fighting)
+  //   Poison/Bug     → Psychic   (Poison primary overrides Bug)
+  //   Ghost/Ice      → Psychic   (Ghost=Psychic in PTCGP)
+  //   Grass/Water    → Water     (Water energy attacks dominate)
+  //   Grass/Steel    → Metal     (Steel energy attacks dominate)
+  //   Bug/Steel      → Metal     (Steel energy attacks dominate)
+  //   Dragon/Poison  → Dragon    (Dragon energy attacks dominate)
+  //   Evolution line → consistent with final evolution energy type
+  // ══════════════════════════════════════════════════════════════════════════
   const PTCGP_TYPE_OVERRIDES = {
-    // Grass/Water dual -> Water energy in PTCGP
-    'Lotad':'Water','Lombre':'Water','Ludicolo':'Water',
-    'Surskit':'Water','Masquerain':'Water',
-    'Panpour':'Water','Simipour':'Water',
-    // Grass/Steel or Bug/Steel -> Metal energy in PTCGP
-    'Ferroseed':'Metal','Ferrothorn':'Metal',
-    'Karrablast':'Metal','Escavalier':'Metal',
-    // Fairy-type -> Psychic energy in PTCGP (no Fairy energy)
+    // ── Fairy → Psychic ────────────────────────────────────────────────────
     'Clefairy':'Psychic','Clefable':'Psychic','Cleffa':'Psychic',
-    'Igglybuff':'Psychic','Jigglypuff':'Psychic','Wigglytuff':'Psychic','Wigglytuff ex':'Psychic',
-    'Togepi':'Psychic','Togetic':'Psychic','Togekiss':'Psychic','Togekiss ex':'Psychic',
+    'Igglybuff':'Psychic','Jigglypuff':'Psychic',
+    'Wigglytuff':'Psychic','Wigglytuff ex':'Psychic',
+    'Togepi':'Psychic','Togetic':'Psychic',
+    'Togekiss':'Psychic','Togekiss ex':'Psychic',
     'Snubbull':'Psychic','Granbull':'Psychic',
     'Azurill':'Psychic','Marill':'Psychic','Azumarill':'Psychic',
     'Cottonee':'Psychic','Whimsicott':'Psychic','Whimsicott ex':'Psychic',
     'Morelull':'Psychic','Shiinotic':'Psychic',
-    'Carbink':'Psychic','Fidough':'Psychic','Dachsbun':'Psychic',
-    'Froslass':'Psychic',  // Ghost/Ice -> Psychic (Ghost energy = Psychic)
-    // Poison-type -> Psychic energy in PTCGP (all Poison types use Psychic energy)
+    'Carbink':'Psychic',
+    'Fidough':'Psychic','Dachsbun':'Psychic',
+    // ── Ghost/Ice → Psychic ────────────────────────────────────────────────
+    'Froslass':'Psychic',
+    // ── Poison → Psychic ───────────────────────────────────────────────────
     'Ekans':'Psychic','Arbok':'Psychic',
     'Koffing':'Psychic','Weezing':'Psychic',
     'Grimer':'Psychic','Muk':'Psychic',
-    'Seviper':'Psychic','Trubbish':'Psychic','Garbodor':'Psychic',
     'Zubat':'Psychic','Golbat':'Psychic','Crobat':'Psychic','Crobat ex':'Psychic',
     'Nidoran\u2640':'Psychic','Nidorina':'Psychic','Nidoqueen':'Psychic',
     'Nidoran\u2642':'Psychic','Nidorino':'Psychic','Nidoking':'Psychic',
-    'Mareanie':'Psychic','Toxapex':'Psychic','Qwilfish':'Psychic',
-    'Toxicroak':'Psychic',
+    'Seviper':'Psychic',
+    'Trubbish':'Psychic','Garbodor':'Psychic',
     'Venipede':'Psychic','Whirlipede':'Psychic','Scolipede':'Psychic',
+    'Skorupi':'Psychic','Drapion':'Psychic',
+    'Croagunk':'Psychic','Toxicroak':'Psychic',
+    'Mareanie':'Psychic','Toxapex':'Psychic',
+    'Qwilfish':'Psychic',
     'Paldean Wooper':'Psychic',
     'Paldean Clodsire':'Psychic','Paldean Clodsire ex':'Psychic',
     'Poipole':'Psychic','Nihilego':'Psychic',
     'Shroodle':'Psychic','Grafaiai':'Psychic',
     'Skrelp':'Psychic','Dragalge':'Psychic','Dragalge ex':'Psychic',
-    // Dragon/Poison -> Dragon energy in PTCGP
+    // ── Grass/Water → Water ────────────────────────────────────────────────
+    'Lotad':'Water','Lombre':'Water','Ludicolo':'Water',
+    'Surskit':'Water','Masquerain':'Water',
+    // ── Grass/Steel, Bug/Steel → Metal ─────────────────────────────────────
+    'Ferroseed':'Metal','Ferrothorn':'Metal',
+    'Karrablast':'Metal','Escavalier':'Metal',
+    // ── Dragon/Poison → Dragon ─────────────────────────────────────────────
     'Naganadel':'Dragon','Naganadel ex':'Dragon',
+    // ── Evolution-line energy consistency ──────────────────────────────────
+    // Fletchling evolves into Fire-type line → Fire
+    'Fletchling':'Fire',
+    // Mega Altaria ex uses Colorless energy in PTCGP
+    'Mega Altaria ex':'Colorless',
   };
+
+  let _overrideCount = 0;
   for (const card of normalized) {
     const override = PTCGP_TYPE_OVERRIDES[card.name];
-    if (override) card.type = override;
+    if (override && card.type !== override) {
+      card.type = override;
+      _overrideCount++;
+    }
   }
+  if (_overrideCount > 0) log(`  Applied ${_overrideCount} PTCGP type overrides`);
+
+  // ── Self-healing type validator ────────────────────────────────────────────
+  // Catches any card that slipped through with an invalid or blank type.
+  // Also detects and reports suspicious counts for operator review.
+  const VALID_TYPES = new Set(['Grass','Fire','Water','Lightning','Psychic',
+                                'Fighting','Dark','Metal','Dragon','Colorless','Trainer']);
+  let _invalidCount = 0;
+  for (const card of normalized) {
+    if (!VALID_TYPES.has(card.type)) {
+      log(`  WARN: Card "${card.name}" (${card.id}) has invalid type "${card.type}" — setting Colorless`, 'yellow');
+      card.type = 'Colorless';
+      _invalidCount++;
+    }
+  }
+  if (_invalidCount > 0) log(`  Fixed ${_invalidCount} invalid type values`, 'yellow');
+
+  // Print type distribution for CI log visibility
+  const _typeDist = {};
+  for (const c of normalized) _typeDist[c.type] = (_typeDist[c.type]||0)+1;
+  log('  Type distribution: ' + Object.entries(_typeDist)
+    .sort((a,b) => b[1]-a[1])
+    .map(([t,n]) => t+':'+n)
+    .join('  '));
 
   // ── Stable set order, then card number within each set
   normalized.sort((a, b) => {
