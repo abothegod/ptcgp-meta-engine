@@ -1097,6 +1097,46 @@ async function fetchCardDatabase() {
   }
   if (_overrideCount > 0) log(`  Applied ${_overrideCount} PTCGP type overrides`);
 
+  // ── Per-ID multi-form fixes ────────────────────────────────────────────────
+  // Some Pokémon have multiple forms with DIFFERENT energy types but share
+  // the same card name. Name-based overrides can't handle these — they need
+  // exact card IDs derived from their position within each set.
+  //
+  // Verified against pocket.limitlesstcg.com set listings.
+  const PTCGP_ID_TYPE_FIXES = {
+    // Oricorio forms — 4 forms, 4 different energy types
+    // Baile Form = Fire, Pom-Pom Form = Lightning, Pa'u Form = Psychic, Sensu Form = Psychic
+    'A3-034':  'Fire',       // Oricorio Baile (Fire section of A3)
+    'A3-066':  'Lightning',  // Oricorio Pom-Pom (Lightning section of A3)
+    // A3-076 = Pa'u (Psychic) ✓, A3-077 = Sensu (Psychic) ✓
+    'A3-165':  'Fire',       // Oricorio Baile alt art
+    'A4b-146': 'Fire',       // Oricorio Baile
+    'A4b-147': 'Lightning',  // Oricorio Pom-Pom
+    // A4b-178 = Psychic ✓, A4b-179 = Psychic ✓
+    'B1-303':  'Fire',       // Oricorio Baile (Fire section of B1)
+    'B2-022':  'Fire',       // Oricorio Baile (Fire section of B2)
+    'B2-161':  'Fire',       // Oricorio Baile alt art
+
+    // Wormadam forms — 3 forms, 3 different energy types
+    // Plant Cloak = Grass ✓ (A2-016), Sandy Cloak = Fighting, Trash Cloak = Metal
+    'A2-090':  'Fighting',   // Wormadam Sandy Cloak (sits in Fighting section)
+    'A2-115':  'Metal',      // Wormadam Trash Cloak (sits in Metal section)
+
+    // Rotom — Ghost/alternate forms sit in Psychic section
+    'A2-164':  'Psychic',    // Rotom (Ghost form alt art in Psychic section of A2)
+    'A2a-035': 'Psychic',    // Rotom (same)
+  };
+
+  let _idFixCount = 0;
+  for (const card of normalized) {
+    const idFix = PTCGP_ID_TYPE_FIXES[card.id];
+    if (idFix && card.type !== idFix) {
+      card.type = idFix;
+      _idFixCount++;
+    }
+  }
+  if (_idFixCount > 0) log(`  Applied ${_idFixCount} per-ID form fixes (Oricorio, Wormadam, Rotom)`);
+
   // ── Self-healing type validator ────────────────────────────────────────────
   // Catches any card that slipped through with an invalid or blank type.
   // Also detects and reports suspicious counts for operator review.
