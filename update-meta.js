@@ -961,8 +961,17 @@ const _LIMITLESS_SYMBOL_MAP = {
   N: 'Dragon', C: 'Colorless',
 };
 
+/**
+ * Fetch type AND stage data from Limitless set list pages.
+ * Returns { types: { cardId: type }, stages: { cardId: stage|null } }.
+ * No extra HTTP requests — stage text is in the same 4th <td> we already parse:
+ *   Pokémon: <span class="ptcg-symbol">G</span> Basic   → stage "Basic"
+ *   Pokémon: <span class="ptcg-symbol">G</span> Stage 2 → stage "Stage 2"
+ *   Trainer: "Supporter" / "Item" / etc.                → stage null
+ */
 async function fetchLimitlessTypeOverrides() {
   const lookup = {};
+  const stages = {};
 
   for (const { limitless, db } of _LIMITLESS_SETS) {
     const url = `https://pocket.limitlesstcg.com/cards/${limitless}?display=list&show=all`;
@@ -1004,8 +1013,17 @@ async function fetchLimitlessTypeOverrides() {
         if (symMatch) {
           const type = _LIMITLESS_SYMBOL_MAP[symMatch[1]];
           if (type) { lookup[cardId] = type; count++; }
+
+          // Extract stage from the text after the symbol span
+          // e.g. "G Basic", "G Stage 1", "G Stage 2"
+          const cellText = typeCell.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+          // Strip leading symbol letter(s) to get the stage word(s)
+          const stageWord = cellText.replace(/^[A-Z]+\s*/, '').trim();
+          stages[cardId] = ['Basic', 'Stage 1', 'Stage 2'].includes(stageWord)
+            ? stageWord : null;
         } else if (/Supporter|Item|Stadium|Fossil|Tool/i.test(typeCell)) {
           lookup[cardId] = 'Trainer';
+          stages[cardId] = null;
           count++;
         }
       }
@@ -1017,7 +1035,7 @@ async function fetchLimitlessTypeOverrides() {
     await new Promise(r => setTimeout(r, 300));
   }
 
-  return lookup;
+  return { types: lookup, stages };
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1359,27 +1377,36 @@ async function fetchCardDatabase() {
         setCode, number: numStr,
         rarity:      _normalizeRarity(raw.rarity),
         hp, retreatCost, attacks, abilities,
+        stage:       null,   // populated by fetchLimitlessTypeOverrides()
         deckgymName: raw.name || id,
         imageUrl:    _buildImageUrl(setCode, numStr),
       });
     } catch (_) { /* skip malformed entries */ }
   }
 
-  // ── Apply type corrections: try Limitless (authoritative), fall back to
+  // ── Apply type + stage data: try Limitless (authoritative), fall back to
   //    name-based rules if the web fetch fails. ─────────────────────────────
   try {
-    log('  Fetching authoritative types from pocket.limitlesstcg.com…');
-    const limitlessTypes = await fetchLimitlessTypeOverrides();
+    log('  Fetching authoritative types + stages from pocket.limitlesstcg.com…');
+    const { types: limitlessTypes, stages: limitlessStages } = await fetchLimitlessTypeOverrides();
     const fetched = Object.keys(limitlessTypes).length;
     if (fetched < 100) throw new Error(`too few cards fetched (${fetched})`);
+
     let overrideCount = 0;
     for (const card of normalized) {
       const t = limitlessTypes[card.id];
       if (t && t !== card.type) { card.type = t; overrideCount++; }
     }
     if (overrideCount > 0) log(`  Applied ${overrideCount} Limitless type overrides`);
+
+    let stageCount = 0;
+    for (const card of normalized) {
+      const s = limitlessStages[card.id];
+      if (s !== undefined) { card.stage = s; stageCount++; }
+    }
+    log(`  Applied stage data to ${stageCount} cards`);
   } catch (e) {
-    log(`  Limitless type fetch failed (${e.message}) — using name-based rules`, 'yellow');
+    log(`  Limitless fetch failed (${e.message}) — using name-based rules`, 'yellow');
     applyPtcgpTypeCorrections(normalized);
   }
 
@@ -1583,7 +1610,7 @@ function detectEnergyTypes(name, fullCardDb) {
  * Uses the minimum energy cost of each core Pokémon's cheapest attack and
  * its retreat cost.  Falls back to 2 when no detail data is available.
  */
-function estimateSetupSpeed(coreIds, detail) {
+function estimateSetupSpeed(coreIds, detail, evolutionDepth = 0) {
   if (!coreIds || coreIds.length === 0) return 2;
 
   let totalMinEnergy = 0;
@@ -1607,12 +1634,14 @@ function estimateSetupSpeed(coreIds, detail) {
 
   const avgEnergy  = totalMinEnergy / count;
   const avgRetreat = totalRetreat   / count;
-  // Composite: energy carries more weight than retreat
-  const composite = avgEnergy * 0.65 + avgRetreat * 0.35;
+  // Composite: energy carries more weight than retreat;
+  // each evolution stage adds inherent setup delay (~0.4 turns)
+  const evoFactor = (evolutionDepth || 0) * 0.4;
+  const composite = avgEnergy * 0.65 + avgRetreat * 0.35 + evoFactor;
 
-  if (composite <= 1.2) return 1; // fast  — 1–2 energy, 0–1 retreat
+  if (composite <= 1.2) return 1; // fast   — cheap attack, Basic, low retreat
   if (composite <= 2.2) return 2; // medium — typical attacker
-  return 3;                        // slow   — 3+ energy or heavy retreat
+  return 3;                        // slow   — 3+ energy, Stage 2, or heavy retreat
 }
 
 /**
@@ -1657,18 +1686,32 @@ function estimateDisruption(coreIds, detail) {
   return Math.min(score, 10);
 }
 
-function checkEvoLines(name) {
-  const stage2 = ['Hydreigon','Greninja','Magnezone','Chandelure','Gardevoir',
-                  'Mega Charizard','Mega Blaziken','Mega Venusaur',
-                  'Mega Steelix','Mega Gyarados','Mega Swampert','Gourgeist Houndstone'];
-  for (const s2 of stage2) {
-    if (name.includes(s2)) return { hasFullEvoLine: true, hasPartialEvo: true };
+/**
+ * Determine evolution line complexity using real stage data from FULL_CARD_DB.
+ * Returns:
+ *   hasFullEvoLine  — true if deck contains a Stage 2 card
+ *   hasPartialEvo   — true if deck contains Stage 1 or Stage 2
+ *   evolutionDepth  — 0 (Basic-only), 1 (Stage 1), or 2 (Stage 2)
+ *   setupComplexity — 1 / 2 / 3 for Basic / Stage1 / Stage2 decks
+ */
+function checkEvoLines(coreIds, fullCardDb) {
+  if (!coreIds || coreIds.length === 0 || !fullCardDb) {
+    return { hasFullEvoLine: false, hasPartialEvo: false, evolutionDepth: 0, setupComplexity: 1 };
   }
-  const stage1 = ['Gourgeist','Mega Altaria','Mega Absol','Mega Kangaskhan'];
-  for (const s1 of stage1) {
-    if (name.includes(s1)) return { hasFullEvoLine: false, hasPartialEvo: true };
+  const cardMap = Object.fromEntries(fullCardDb.map(c => [c.id, c]));
+  let maxDepth = 0;
+  for (const id of coreIds) {
+    const card = cardMap[id];
+    if (!card || card.type === 'Trainer') continue;
+    if (card.stage === 'Stage 2') maxDepth = Math.max(maxDepth, 2);
+    else if (card.stage === 'Stage 1') maxDepth = Math.max(maxDepth, 1);
   }
-  return { hasFullEvoLine: false, hasPartialEvo: false };
+  return {
+    hasFullEvoLine:  maxDepth >= 2,
+    hasPartialEvo:   maxDepth >= 1,
+    evolutionDepth:  maxDepth,
+    setupComplexity: maxDepth + 1,  // 1=Basic-only, 2=has Stage1, 3=has Stage2
+  };
 }
 
 function buildCoreCards(name) {
@@ -1709,9 +1752,9 @@ function buildCoreCards(name) {
 
 function enrichArchetype(raw, fullCardDb, detail) {
   const energyTypes     = detectEnergyTypes(raw.name, fullCardDb);
-  const evoInfo         = checkEvoLines(raw.name); // still name-based — stage data not in DB yet
   const coreIds         = buildCoreCards(raw.name);
-  const setupTurns      = estimateSetupSpeed(coreIds, detail);
+  const evoInfo         = checkEvoLines(coreIds, fullCardDb);    // fully data-driven
+  const setupTurns      = estimateSetupSpeed(coreIds, detail, evoInfo.evolutionDepth);
   const disruptionScore = estimateDisruption(coreIds, detail);
   return { ...raw, energyTypes, ...evoInfo, coreIds, setupTurns, disruptionScore };
 }
