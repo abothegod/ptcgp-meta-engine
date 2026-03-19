@@ -1545,56 +1545,115 @@ async function fetchPtcgpocketTiers() {
 // ARCHETYPE ENRICHMENT
 // ═══════════════════════════════════════════════════════════════════
 
-function detectEnergyTypes(name) {
-  const typeMap = {
-    'Greninja': 'Water', 'Suicune': 'Water', 'Froakie': 'Water',
-    'Greninja ex': 'Water',
-    'Hydreigon': 'Dark', 'Absol': 'Dark', 'Darkrai': 'Dark',
-    'Obstagoon': 'Dark', 'Weavile': 'Dark', 'Houndstone': 'Dark',
-    'Giratina': 'Psychic', 'Mewtwo': 'Psychic', 'Gardevoir': 'Psychic',
-    'Mimikyu': 'Psychic', 'Gourgeist': 'Psychic', 'Chandelure': 'Psychic',
-    'Meloetta': 'Psychic',
-    'Magnezone': 'Lightning', 'Jolteon': 'Lightning', 'Raichu': 'Lightning',
-    'Galvantula': 'Lightning', 'Zeraora': 'Lightning', 'Bellibolt': 'Lightning',
-    'Charizard': 'Fire', 'Blaziken': 'Fire', 'Entei': 'Fire',
-    'Altaria': 'Colorless', 'Kangaskhan': 'Colorless', 'Snorlax': 'Colorless', 'Silvally': 'Colorless',
-    'Baxcalibur': 'Water',
-    'Banette': 'Psychic',
-    'Leafeon': 'Grass', 'Venusaur': 'Grass',
-  };
-  const types = new Set();
-  for (const [keyword, type] of Object.entries(typeMap)) {
-    if (name.includes(keyword)) types.add(type);
+/**
+ * Detect energy types for an archetype using FULL_CARD_DB — no hardcoding.
+ *
+ * Strategy: find all cards in the DB whose name is contained in (or contains)
+ * the archetype name, tally their types, and return the dominant type(s).
+ * Works for any archetype including future ones not manually listed.
+ */
+function detectEnergyTypes(name, fullCardDb) {
+  if (!fullCardDb || fullCardDb.length === 0) return ['Colorless'];
+
+  const norm = s => s.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+  const archKey = norm(name);
+
+  const typeCounts = {};
+  for (const card of fullCardDb) {
+    if (card.type === 'Trainer') continue;
+    const cardKey = norm(card.name);
+    // Match when the archetype name contains the card name or vice versa
+    if (archKey === cardKey || archKey.includes(cardKey) || cardKey.includes(archKey)) {
+      typeCounts[card.type] = (typeCounts[card.type] || 0) + 1;
+    }
   }
-  const singleType = {
-    'Hydreigon': 'Dark', 'Magnezone': 'Lightning',
-    'Mega Altaria': 'Colorless', 'Mega Kangaskhan': 'Colorless',
-    'Gourgeist Houndstone': 'Psychic',
-  };
-  for (const [keyword, type] of Object.entries(singleType)) {
-    if (name.includes(keyword)) { types.clear(); types.add(type); break; }
-  }
-  return types.size > 0 ? [...types] : ['Colorless'];
+
+  if (Object.keys(typeCounts).length === 0) return ['Colorless'];
+
+  const sorted = Object.entries(typeCounts).sort((a, b) => b[1] - a[1]);
+  const types = [sorted[0][0]];
+  // Include a second type only when it accounts for ≥50 % of the dominant count
+  if (sorted[1] && sorted[1][1] / sorted[0][1] >= 0.5) types.push(sorted[1][0]);
+  return types;
 }
 
-function estimateSetupSpeed(name) {
-  if (/Mega (Charizard|Gardevoir|Blaziken|Venusaur|Steelix|Gyarados|Swampert)/.test(name)) return 3;
-  if (/Hydreigon|Magnezone|Greninja ex|Chandelure/.test(name)) return 3;
-  if (/Gourgeist Houndstone/.test(name)) return 3;
-  if (/Suicune|Giratina|Darkrai|Mimikyu/.test(name)) return 2;
-  if (/Mega Absol|Mega Kangaskhan|Mega Altaria/.test(name)) return 2;
-  if (/Oricorio|Chingling/.test(name)) return 1;
-  return 2;
+/**
+ * Estimate setup speed (1=fast, 2=medium, 3=slow) from real card data.
+ *
+ * Uses the minimum energy cost of each core Pokémon's cheapest attack and
+ * its retreat cost.  Falls back to 2 when no detail data is available.
+ */
+function estimateSetupSpeed(coreIds, detail) {
+  if (!coreIds || coreIds.length === 0) return 2;
+
+  let totalMinEnergy = 0;
+  let totalRetreat   = 0;
+  let count          = 0;
+
+  for (const id of coreIds) {
+    const d = detail && detail[id];
+    if (!d) continue;
+    count++;
+    totalRetreat += (d.retreatCost ?? 1);
+    if (d.attacks && d.attacks.length > 0) {
+      const minCost = Math.min(...d.attacks.map(a => (a.cost || []).length));
+      totalMinEnergy += minCost;
+    } else {
+      totalMinEnergy += 2; // no attack data — assume medium cost
+    }
+  }
+
+  if (count === 0) return 2;
+
+  const avgEnergy  = totalMinEnergy / count;
+  const avgRetreat = totalRetreat   / count;
+  // Composite: energy carries more weight than retreat
+  const composite = avgEnergy * 0.65 + avgRetreat * 0.35;
+
+  if (composite <= 1.2) return 1; // fast  — 1–2 energy, 0–1 retreat
+  if (composite <= 2.2) return 2; // medium — typical attacker
+  return 3;                        // slow   — 3+ energy or heavy retreat
 }
 
-function estimateDisruption(name) {
+/**
+ * Score disruption potential (0–10) by scanning the actual attack and
+ * ability effect text of each core card for disruption keywords.
+ *
+ * Works for any card — no name hardcoding required.
+ */
+function estimateDisruption(coreIds, detail) {
+  const KEYWORDS = {
+    'paralyze':        3,
+    "can't attack":    3,
+    "can't use":       3,
+    'prevent':         3,
+    'discard':         2,
+    'confuse':         2,
+    'sleep':           2,
+    'poison':          2,
+    'switch':          2,
+    'damage counter':  2,
+    'your opponent':   1,
+    'bench':           1,
+    'shuffle':         1,
+    'flip a coin':     1,
+    'burn':            1,
+  };
+
   let score = 0;
-  if (/Chingling/.test(name))        score += 3;
-  if (/Obstagoon|Galarian/.test(name)) score += 4;
-  if (/Darkrai/.test(name))          score += 2;
-  if (/Mimikyu/.test(name))          score += 3;
-  if (/Giratina/.test(name))         score += 2;
-  if (/Houndstone/.test(name))       score += 3; // Houndstone bench pressure
+  for (const id of coreIds) {
+    const d = detail && detail[id];
+    if (!d) continue;
+    const texts = [
+      ...(d.attacks   || []).map(a => (a.effect  || '').toLowerCase()),
+      ...(d.abilities || []).map(a => (a.effect  || '').toLowerCase()),
+    ];
+    for (const text of texts) {
+      for (const [kw, pts] of Object.entries(KEYWORDS)) {
+        if (text.includes(kw)) score += pts;
+      }
+    }
+  }
   return Math.min(score, 10);
 }
 
@@ -1648,12 +1707,13 @@ function buildCoreCards(name) {
   return [...new Set(cores)].filter(id => KNOWN_CARDS[id]);
 }
 
-function enrichArchetype(raw) {
-  const energyTypes     = detectEnergyTypes(raw.name);
-  const evoInfo         = checkEvoLines(raw.name);
-  const setupTurns      = estimateSetupSpeed(raw.name);
-  const disruptionScore = estimateDisruption(raw.name);
-  return { ...raw, energyTypes, ...evoInfo, setupTurns, disruptionScore };
+function enrichArchetype(raw, fullCardDb, detail) {
+  const energyTypes     = detectEnergyTypes(raw.name, fullCardDb);
+  const evoInfo         = checkEvoLines(raw.name); // still name-based — stage data not in DB yet
+  const coreIds         = buildCoreCards(raw.name);
+  const setupTurns      = estimateSetupSpeed(coreIds, detail);
+  const disruptionScore = estimateDisruption(coreIds, detail);
+  return { ...raw, energyTypes, ...evoInfo, coreIds, setupTurns, disruptionScore };
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1983,6 +2043,13 @@ function patchHtml(decks, fullCardDb, metaStats = {}, matchupMatrix = null) {
 // ═══════════════════════════════════════════════════════════════════
 
 const DETAIL_FILE  = path.resolve(__dirname, 'cards-detail.json');
+
+/** Load cards-detail.json from disk (generated by Phase 7). Returns {} on miss. */
+function loadCardDetail() {
+  if (!fs.existsSync(DETAIL_FILE)) return {};
+  try { return JSON.parse(fs.readFileSync(DETAIL_FILE, 'utf8')); }
+  catch { return {}; }
+}
 const DETAIL_BATCH = 8;    // concurrent fetches per batch
 const DETAIL_DELAY = 400;  // ms between batches (be polite)
 
@@ -2157,6 +2224,10 @@ async function runPipeline() {
   // ── 0. FULL CARD DB ────────────────────────────────────────────
   const fullCardDb = await fetchCardDatabase();
 
+  // ── 0b. CARD DETAIL ────────────────────────────────────────────
+  const detail = loadCardDetail();
+  log(`  Card detail loaded: ${Object.keys(detail).length} entries`);
+
   // ── 1. FETCH ──────────────────────────────────────────────────
   log('\n► Phase 1: Fetching tournament data…');
   const [limitlessResult, editorialTiers] = await Promise.all([
@@ -2180,7 +2251,7 @@ async function runPipeline() {
 
   // ── 3. ENRICH ─────────────────────────────────────────────────
   log('\n► Phase 3: Enriching with strategy engine…');
-  const enriched = merged.map(enrichArchetype);
+  const enriched = merged.map(arch => enrichArchetype(arch, fullCardDb, detail));
 
   // ── 4. SCORE & FILTER ─────────────────────────────────────────
   // All archetypes meeting the sample threshold are included (no top-N cap)
