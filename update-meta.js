@@ -1979,6 +1979,173 @@ function patchHtml(decks, fullCardDb, metaStats = {}, matchupMatrix = null) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// CARD DETAIL FETCHER  (produces cards-detail.json)
+// ═══════════════════════════════════════════════════════════════════
+
+const DETAIL_FILE  = path.resolve(__dirname, 'cards-detail.json');
+const DETAIL_BATCH = 8;    // concurrent fetches per batch
+const DETAIL_DELAY = 400;  // ms between batches (be polite)
+
+// Reverse map: our DB set code → Limitless URL set code
+const _DB_TO_LIMITLESS = Object.fromEntries(
+  _LIMITLESS_SETS.map(({ limitless, db }) => [db, limitless])
+);
+
+/** Convert a card ID like "A1-001" or "PROMO-A-001" to its Limitless page URL. */
+function _cardIdToLimitlessUrl(cardId) {
+  const lastDash  = cardId.lastIndexOf('-');
+  const setCode   = cardId.slice(0, lastDash);
+  const num       = parseInt(cardId.slice(lastDash + 1), 10);
+  const limitless = _DB_TO_LIMITLESS[setCode];
+  if (!limitless || !Number.isFinite(num)) return null;
+  return `https://pocket.limitlesstcg.com/cards/${limitless}/${num}`;
+}
+
+/** Expand a ptcg-symbol string like "GC" into ["Grass","Colorless"]. */
+function _parseCostString(raw) {
+  const sym = {
+    G: 'Grass',  R: 'Fire',    W: 'Water', L: 'Lightning',
+    P: 'Psychic',F: 'Fighting',D: 'Dark',  M: 'Metal',
+    N: 'Dragon', C: 'Colorless',
+  };
+  return [...raw].map(c => sym[c]).filter(Boolean);
+}
+
+/**
+ * Fetch a single card's detail page from Limitless and return:
+ *   { hp, retreatCost, attacks: [{cost,name,damage,effect}], abilities: [{name,effect}] }
+ * Returns null if the fetch fails or the card has no parseable detail.
+ */
+async function fetchOneCardDetail(cardId) {
+  const url = _cardIdToLimitlessUrl(cardId);
+  if (!url) return null;
+
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PTCGP-MetaBot/1.0; +https://github.com)' },
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+
+    // ── HP ─────────────────────────────────────────────────────────────
+    const hpMatch = html.match(/card-text-title[\s\S]{0,400}?(\d+)\s*HP/i);
+    const hp = hpMatch ? parseInt(hpMatch[1], 10) : null;
+
+    // ── Retreat cost ───────────────────────────────────────────────────
+    const retreatMatch = html.match(/Retreat:\s*(\d+)/i);
+    const retreatCost = retreatMatch ? parseInt(retreatMatch[1], 10) : null;
+
+    // ── Attacks ────────────────────────────────────────────────────────
+    // Each attack is wrapped in <div class="card-text-attack">
+    const attacks = [];
+    const attackBlockRe = /<div[^>]*class="card-text-attack"[^>]*>([\s\S]*?)<\/div>/gi;
+    let atkMatch;
+    while ((atkMatch = attackBlockRe.exec(html)) !== null) {
+      const block = atkMatch[1];
+
+      const infoMatch = block.match(/class="card-text-attack-info"[^>]*>([\s\S]*?)<\/p>/i);
+      if (!infoMatch) continue;
+      const infoHtml = infoMatch[1];
+
+      // Cost symbols
+      const costSymMatch = infoHtml.match(/class="ptcg-symbol">([A-Z]+)</);
+      const cost = costSymMatch ? _parseCostString(costSymMatch[1]) : [];
+
+      // Name and optional damage number — strip ptcg-symbol span (cost) first
+      const infoStripped = infoHtml.replace(/<span[^>]*ptcg-symbol[^>]*>[\s\S]*?<\/span>/gi, '');
+      const infoText = infoStripped.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      const nameDmg  = infoText.match(/^(.*?)\s+(\d+)\s*$/) || [null, infoText, null];
+      const name     = (nameDmg[1] || infoText).trim();
+      const damage   = nameDmg[2] ? parseInt(nameDmg[2], 10) : null;
+
+      // Effect text (may be empty)
+      const effectMatch = block.match(/class="card-text-attack-effect"[^>]*>([\s\S]*?)<\/p>/i);
+      const effect = effectMatch ? effectMatch[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim() : '';
+
+      if (name) attacks.push({ cost, name, damage, effect });
+    }
+
+    // ── Abilities ──────────────────────────────────────────────────────
+    const abilities = [];
+    const abilBlockRe = /<div[^>]*class="card-text-ability"[^>]*>([\s\S]*?)<\/div>/gi;
+    let abilMatch;
+    while ((abilMatch = abilBlockRe.exec(html)) !== null) {
+      const block = abilMatch[1];
+      const nameMatch   = block.match(/class="card-text-ability-name"[^>]*>([\s\S]*?)<\//i);
+      const effectMatch = block.match(/class="card-text-ability-effect"[^>]*>([\s\S]*?)<\//i);
+      if (nameMatch) {
+        abilities.push({
+          name:   nameMatch[1].replace(/<[^>]+>/g, '').trim(),
+          effect: effectMatch ? effectMatch[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim() : '',
+        });
+      }
+    }
+
+    return { hp, retreatCost, attacks, abilities };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build (or incrementally update) cards-detail.json.
+ *
+ * Strategy:
+ *  - Load the existing file as a cache — already-fetched cards are skipped.
+ *  - Fetch only new/missing cards in batches of DETAIL_BATCH (8 concurrent).
+ *  - Save to disk after every batch so a crash loses at most one batch.
+ *  - Total time for a cold start (~2916 cards): ~365 batches × 400 ms ≈ 2.5 min.
+ *  - Subsequent runs (only new set additions): typically < 5 s.
+ */
+async function buildCardsDetailJson(allCards) {
+  log('\n► Phase 7: Building cards-detail.json…');
+
+  // Load existing cache
+  let cache = {};
+  if (fs.existsSync(DETAIL_FILE)) {
+    try { cache = JSON.parse(fs.readFileSync(DETAIL_FILE, 'utf8')); }
+    catch { cache = {}; }
+  }
+  log(`  Cache: ${Object.keys(cache).length} cards already stored`);
+
+  // Only fetch cards not yet in cache (Trainer cards have no detail page worth parsing)
+  const todo = allCards.filter(c => c.type !== 'Trainer' && !cache[c.id]);
+  log(`  To fetch: ${todo.length} new cards`);
+
+  if (todo.length === 0) {
+    log('  All Pokémon cards cached — skipping network phase');
+    return cache;
+  }
+
+  let fetched = 0, failed = 0;
+  for (let i = 0; i < todo.length; i += DETAIL_BATCH) {
+    const batch   = todo.slice(i, i + DETAIL_BATCH);
+    const results = await Promise.all(batch.map(c => fetchOneCardDetail(c.id)));
+
+    for (let j = 0; j < batch.length; j++) {
+      if (results[j]) { cache[batch[j].id] = results[j]; fetched++; }
+      else              { failed++; }
+    }
+
+    // Checkpoint — write after every batch
+    fs.writeFileSync(DETAIL_FILE, JSON.stringify(cache, null, 2));
+
+    // Progress every 40 batches (320 cards)
+    if (i % (DETAIL_BATCH * 40) === 0 && i > 0) {
+      log(`  Progress: ${Math.min(i + DETAIL_BATCH, todo.length)}/${todo.length}`);
+    }
+
+    if (i + DETAIL_BATCH < todo.length) {
+      await new Promise(r => setTimeout(r, DETAIL_DELAY));
+    }
+  }
+
+  log(`  ✓ Fetched ${fetched} cards  (${failed} failed/skipped)`);
+  log(`  ✓ cards-detail.json → ${Object.keys(cache).length} total entries`);
+  return cache;
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // FULL PIPELINE
 // ═══════════════════════════════════════════════════════════════════
 
@@ -2065,6 +2232,9 @@ async function runPipeline() {
   // ── 6. PATCH HTML ─────────────────────────────────────────────
   log('\n► Phase 6: Patching HTML file…');
   patchHtml(finalDecks, fullCardDb, metaStats, matchupMatrix);
+
+  // ── 7. CARD DETAIL JSON ────────────────────────────────────────
+  await buildCardsDetailJson(fullCardDb);
 
   log('\n✓ Update complete.\n');
 }
