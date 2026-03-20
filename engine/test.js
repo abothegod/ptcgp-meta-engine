@@ -2,7 +2,8 @@ import { createRequire } from 'module';
 import { scoreDeck, analyzeDeck, suggestSwaps,
          buildMatchupMatrix, getCounterDecks, getBestDeckVsField,
          solveNash, compareToActualMeta,
-         detectBehavioralBias, getTopEVPicks } from './index.js';
+         detectBehavioralBias, getTopEVPicks,
+         scoreEvolutionaryStability, simulateMetaShift } from './index.js';
 
 const require = createRequire(import.meta.url);
 const detail  = require('../cards-detail.json');
@@ -379,3 +380,64 @@ const noPlaceholders = biasData.every(d => !d.ladderAdvice.includes('{') && !d.l
 const hasNumbers     = biasData.every(d => /\d/.test(d.ladderAdvice));
 console.log(`\n5. ladderAdvice has no placeholders → ${noPlaceholders ? 'PASS ✓' : 'FAIL ✗'}`);
 console.log(`   ladderAdvice contains real numbers  → ${hasNumbers     ? 'PASS ✓' : 'FAIL ✗'}`);
+
+// ─── Phase 7 validation: scoreEvolutionaryStability ──────────────────────────
+console.log('\n=== Phase 7 validation: scoreEvolutionaryStability ===');
+
+const essData = scoreEvolutionaryStability(META_SNAPSHOT, matrixData, nashResult);
+
+// 1. Full ESS table
+console.log('\n1. Full ESS table (sorted by essScore descending):');
+console.log('   ' + 'deckId'.padEnd(34) + 'ess'.padStart(6) + ' ess?'.padEnd(6) +
+            'field'.padStart(7) + ' invVuln'.padStart(9) + ' risk'.padEnd(8) + ' hardCounter');
+console.log('   ' + '─'.repeat(90));
+essData.forEach(d => {
+  const id   = d.deckId.padEnd(34);
+  const ess  = String(d.essScore).padStart(6);
+  const flag = (d.isESS ? '✓' : '·').padEnd(6);
+  const ff   = String(d.fieldFitness).padStart(7);
+  const iv   = String(d.invasionVulnerability).padStart(9);
+  const risk = d.extinctionRisk.padEnd(8);
+  console.log(`   ${id}${ess} ${flag}${ff}${iv} ${risk} ${d.hardCounter}`);
+});
+
+// 2. All essScores in [0, 100]
+const essInRange = essData.every(d => d.essScore >= 0 && d.essScore <= 100);
+console.log(`\n2. All essScores in [0,100] → ${essInRange ? 'PASS ✓' : 'FAIL ✗'}`);
+
+// 3. All extinctionRisk values valid
+const validRisks = new Set(['LOW','MEDIUM','HIGH']);
+const riskOK = essData.every(d => validRisks.has(d.extinctionRisk));
+console.log(`3. All extinctionRisk valid → ${riskOK ? 'PASS ✓' : 'FAIL ✗'}`);
+
+// 4. All hardCounters are valid deckIds
+const allDeckIds = new Set(Object.keys(matrixData));
+const counterOK  = essData.every(d => d.hardCounter && allDeckIds.has(d.hardCounter));
+console.log(`4. All hardCounters are valid deckIds → ${counterOK ? 'PASS ✓' : 'FAIL ✗'}`);
+
+// 5. ESS count
+const essCount = essData.filter(d => d.isESS).length;
+console.log(`5. Decks classified as ESS (score ≥ 65): ${essCount}`);
+
+// 6. simulateMetaShift — boost most-played deck
+const mostPlayed = biasData.reduce((max, d) => d.actualShare > max.actualShare ? d : max, biasData[0]);
+console.log(`\n6. simulateMetaShift() boosting: ${mostPlayed.deckId} (${mostPlayed.actualShare}% actual share)`);
+const shiftResult = simulateMetaShift(essData, matrixData, nashResult, mostPlayed.deckId);
+
+console.log('   Top 5 decks most affected (by |delta|):');
+console.log('   ' + 'deckId'.padEnd(34) + 'before'.padStart(8) + ' after'.padStart(7) + ' delta'.padStart(7) + '  status');
+console.log('   ' + '─'.repeat(70));
+shiftResult.results.slice(0, 5).forEach(r => {
+  const id     = r.deckId.padEnd(34);
+  const before = String(r.essScoreBefore).padStart(8);
+  const after  = String(r.essScoreAfter).padStart(7);
+  const delta  = ((r.delta >= 0 ? '+' : '') + r.delta).padStart(7);
+  console.log(`   ${id}${before}${after}${delta}  ${r.essStatusChange}`);
+});
+
+// 7. essScoreBefore and essScoreAfter in [0, 100]
+const shiftRangeOK = shiftResult.results.every(
+  r => r.essScoreBefore >= 0 && r.essScoreBefore <= 100 &&
+       r.essScoreAfter  >= 0 && r.essScoreAfter  <= 100
+);
+console.log(`\n7. All essScoreBefore/After in [0,100] → ${shiftRangeOK ? 'PASS ✓' : 'FAIL ✗'}`);

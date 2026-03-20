@@ -4,3 +4,4 @@ export { suggestSwaps } from './suggestions.js';
 export { buildMatchupMatrix, getCounterDecks, getBestDeckVsField } from './matchup-matrix.js';
 export { solveNash, compareToActualMeta } from './nash-solver.js';
 export { detectBehavioralBias, getTopEVPicks } from './behavioral-analysis.js';
+export { scoreEvolutionaryStability, simulateMetaShift } from './evolutionary-stability.js';
