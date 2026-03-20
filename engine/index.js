@@ -7,3 +7,4 @@ export { detectBehavioralBias, getTopEVPicks } from './behavioral-analysis.js';
 export { scoreEvolutionaryStability, simulateMetaShift } from './evolutionary-stability.js';
 export { computeShapley, suggestShapleySwaps } from './shapley-engine.js';
 export { analyzeFormatFit, compareFormatFitAcrossMeta } from './mechanism-analyzer.js';
+export { analyzeFullMeta } from './intelligence-api.js';

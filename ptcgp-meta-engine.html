@@ -2561,6 +2561,7 @@ a.sim-step-link:hover { text-decoration: underline; }
     <button class="nav-tab" data-view="cards">Cards<span class="new-cards-badge" id="new-cards-badge" style="display:none"></span></button>
     <button class="nav-tab" data-view="matchups">Matchups</button>
     <button class="nav-tab" data-view="my-decks">My Decks</button>
+    <button class="nav-tab" data-view="intelligence">Intelligence</button>
   </div>
 
   <div class="nav-meta-badge">Updated <span id="nav-meta-date">Mar 2026</span></div>
@@ -2856,6 +2857,27 @@ a.sim-step-link:hover { text-decoration: underline; }
     <span class="footer-sep">·</span>
     Fan project — not affiliated with Nintendo or The Pokémon Company
   </footer>
+
+  <!-- INTELLIGENCE VIEW -->
+  <div class="view" id="view-intelligence">
+    <div class="page-header">
+      <div class="page-header-eyebrow">Game Theory</div>
+      <h1 class="page-header-title">Meta <span class="accent">Intelligence</span></h1>
+      <p class="page-header-desc">Nash equilibrium, behavioral bias, ESS scoring and Shapley card values — unified across all meta decks.</p>
+    </div>
+
+    <div id="intel-loading" style="text-align:center;padding:60px 20px;color:var(--text-muted);font-family:var(--font-display);font-size:13px;letter-spacing:.08em">
+      COMPUTING META INTELLIGENCE…
+    </div>
+    <div id="intel-content" style="display:none">
+      <!-- Section A: Nash Chart -->
+      <div id="intel-section-nash"></div>
+      <!-- Section B: Top EV Picks -->
+      <div id="intel-section-ev" style="margin-top:32px"></div>
+      <!-- Section C: Deck Intelligence Panel -->
+      <div id="intel-section-deck" style="margin-top:32px;margin-bottom:40px"></div>
+    </div>
+  </div>
 
 </main>
 
@@ -8600,7 +8622,8 @@ document.addEventListener("DOMContentLoaded", () => {
 ════════════════════════════════════════════════════════ -->
 <script type="module">
 import { scoreDeck, analyzeDeck, suggestSwaps,
-         buildMatchupMatrix, getCounterDecks, getBestDeckVsField } from './engine/index.js';
+         buildMatchupMatrix, getCounterDecks, getBestDeckVsField,
+         analyzeFullMeta } from './engine/index.js';
 
 /* ── Registry field-mismatch detection ────────────────────────────── */
 const sampleCard = Object.values(CARD_REGISTRY)[0] || {};
@@ -8822,6 +8845,373 @@ window.openModal = function (deck) {
     body.appendChild(section);
   }
 };
+
+/* ── Intelligence API — run full analysis and render tab ─────────────── */
+const INTELLIGENCE_REPORT = analyzeFullMeta(META_SNAPSHOT, ENGINE_REG);
+window.INTELLIGENCE_REPORT = INTELLIGENCE_REPORT;
+console.log('[Intelligence] Report ready:', Object.keys(INTELLIGENCE_REPORT.perDeck).length, 'decks');
+
+/* Inject intelligence tab CSS */
+const intelStyle = document.createElement('style');
+intelStyle.textContent = `
+.intel-section-title {
+  font-family: var(--font-display); font-size: 11px; font-weight: 700;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--text-muted);
+  padding-bottom: 10px; border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 16px;
+}
+.intel-nash-row {
+  display: grid; grid-template-columns: 160px 1fr 1fr 120px;
+  gap: 10px; align-items: center; padding: 7px 0;
+  border-bottom: 1px solid var(--border-subtle); font-size: 12px;
+}
+.intel-nash-row:last-child { border-bottom: none; }
+.intel-nash-label { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.intel-bar-wrap { height: 10px; background: rgba(255,255,255,0.05); border-radius: 5px; overflow: hidden; }
+.intel-bar-actual { height: 100%; border-radius: 5px; background: rgba(79,209,255,0.55); }
+.intel-bar-nash   { height: 100%; border-radius: 5px; background: rgba(167,139,250,0.65); }
+.intel-tag-badge {
+  display: inline-flex; align-items: center; padding: 2px 7px;
+  border-radius: 999px; font-size: 9px; font-weight: 700;
+  letter-spacing: .06em; font-family: var(--font-display); white-space: nowrap;
+}
+.intel-tag-badge.HIDDEN_GEM             { background: rgba(74,222,128,.13); color: #4ade80; border: 1px solid rgba(74,222,128,.3); }
+.intel-tag-badge.OVERHYPED_UNDERPERFORMER { background: rgba(248,113,113,.12); color: #f87171; border: 1px solid rgba(248,113,113,.3); }
+.intel-tag-badge.POPULARITY_TAX        { background: rgba(251,191,36,.12); color: #fbbf24; border: 1px solid rgba(251,191,36,.3); }
+.intel-tag-badge.OVERRATED_UNDERPLAYED { background: rgba(139,160,196,.12); color: #8ba0c4; border: 1px solid rgba(139,160,196,.3); }
+.intel-tag-badge.CORRECT_ASSESSMENT    { background: rgba(79,209,255,.1);  color: #4fd1ff; border: 1px solid rgba(79,209,255,.25); }
+.intel-ev-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.intel-ev-card {
+  background: var(--bg-elevated); border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md); padding: 16px;
+}
+.intel-ev-card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.intel-ev-name { font-size: 14px; font-weight: 600; color: var(--text-primary); flex: 1; }
+.intel-ev-undervalued { font-size: 11px; font-weight: 700; color: var(--green); }
+.intel-ev-advice { font-size: 12px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 10px; }
+.intel-ev-stats { display: flex; gap: 12px; font-size: 11px; color: var(--text-muted); }
+.intel-deck-panel {
+  background: var(--bg-elevated); border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md); padding: 20px;
+}
+.intel-deck-select-wrap { margin-bottom: 18px; }
+.intel-deck-select {
+  background: var(--bg-surface, #111827); border: 1px solid var(--border-mid);
+  color: var(--text-primary); border-radius: var(--radius-sm); padding: 8px 12px;
+  font-family: var(--font-body); font-size: 13px; width: 100%; max-width: 420px; cursor: pointer;
+}
+.intel-signals-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.intel-signal-chip {
+  display: inline-flex; flex-direction: column; align-items: center;
+  padding: 6px 12px; background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
+  font-size: 10px; gap: 2px;
+}
+.intel-signal-label { color: var(--text-muted); letter-spacing: .07em; text-transform: uppercase; }
+.intel-signal-value { font-size: 14px; font-weight: 700; color: var(--text-primary); font-family: var(--font-display); }
+.intel-advice-box {
+  padding: 10px 14px; background: rgba(79,209,255,.05);
+  border-left: 3px solid var(--cyan); border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 13px; color: var(--text-secondary); margin-bottom: 14px; line-height: 1.5;
+}
+.intel-summary-box {
+  padding: 8px 14px; background: rgba(167,139,250,.07);
+  border-left: 3px solid var(--purple); border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 12px; color: var(--text-secondary); margin-bottom: 20px; font-style: italic;
+}
+.intel-shapley-row {
+  display: grid; grid-template-columns: 140px 80px 60px 1fr;
+  gap: 8px; align-items: center; padding: 5px 0;
+  border-bottom: 1px solid var(--border-subtle); font-size: 12px;
+}
+.intel-shapley-row:last-child { border-bottom: none; }
+.intel-shapley-name { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.intel-shapley-val  { color: var(--text-primary); font-weight: 600; text-align: right; }
+.intel-role-badge {
+  display: inline-flex; align-items: center; padding: 1px 6px;
+  border-radius: 4px; font-size: 9px; font-weight: 700; letter-spacing: .07em;
+  font-family: var(--font-display);
+}
+.intel-role-badge.CORE        { background: rgba(79,209,255,.15); color: var(--cyan); border: 1px solid rgba(79,209,255,.3); }
+.intel-role-badge.SUPPORT     { background: rgba(167,139,250,.13); color: var(--purple); border: 1px solid rgba(167,139,250,.3); }
+.intel-role-badge.FLEX        { background: rgba(251,191,36,.12); color: var(--gold); border: 1px solid rgba(251,191,36,.3); }
+.intel-role-badge.DEADWEIGHT  { background: rgba(248,113,113,.1); color: var(--red); border: 1px solid rgba(248,113,113,.25); }
+.intel-shapley-bar-wrap { height: 6px; background: rgba(255,255,255,0.05); border-radius: 3px; overflow: hidden; }
+.intel-shapley-bar { height: 100%; border-radius: 3px; }
+.intel-matchup-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.intel-matchup-chip {
+  display: inline-flex; flex-direction: column; align-items: center;
+  padding: 4px 8px; border-radius: var(--radius-sm); font-size: 10px;
+  min-width: 70px; text-align: center; border: 1px solid rgba(255,255,255,0.08);
+}
+.intel-matchup-name { color: rgba(255,255,255,0.6); margin-bottom: 2px; white-space: nowrap; overflow: hidden; max-width: 70px; text-overflow: ellipsis; }
+.intel-matchup-pct  { font-weight: 700; font-size: 12px; }
+`;
+document.head.appendChild(intelStyle);
+
+/* ── Nash bar chart (Section A) ─────────────────────────────────────── */
+function renderNashChart(report) {
+  const el = document.getElementById('intel-section-nash');
+  if (!el) return;
+
+  const title = document.createElement('div');
+  title.className = 'intel-section-title';
+  title.textContent = 'Nash Equilibrium vs Actual Meta Share';
+  el.appendChild(title);
+
+  // Legend
+  const legend = document.createElement('div');
+  legend.style.cssText = 'display:flex;gap:20px;margin-bottom:12px;font-size:11px;color:var(--text-muted)';
+  legend.innerHTML =
+    '<span><span style="display:inline-block;width:12px;height:8px;background:rgba(79,209,255,.55);border-radius:2px;margin-right:5px"></span>Actual %</span>' +
+    '<span><span style="display:inline-block;width:12px;height:8px;background:rgba(167,139,250,.65);border-radius:2px;margin-right:5px"></span>Nash optimal %</span>';
+  el.appendChild(legend);
+
+  // Header row
+  const hdr = document.createElement('div');
+  hdr.className = 'intel-nash-row';
+  hdr.style.cssText = 'font-family:var(--font-display);font-size:9px;letter-spacing:.08em;color:var(--text-muted);border-bottom:1px solid var(--border-subtle)';
+  hdr.innerHTML = '<div>DECK</div><div>ACTUAL %</div><div>NASH %</div><div>SIGNAL</div>';
+  el.appendChild(hdr);
+
+  // Sort by nashShare descending
+  const rows = [...report.behavioral].sort((a, b) => b.nashShare - a.nashShare);
+  const maxShare = Math.max(...rows.map(r => Math.max(r.actualShare, r.nashShare)), 1);
+
+  rows.forEach(r => {
+    const deck = META_SNAPSHOT.find(d => d.id === r.deckId);
+    const row = document.createElement('div');
+    row.className = 'intel-nash-row';
+
+    const lbl = document.createElement('div');
+    lbl.className = 'intel-nash-label';
+    lbl.title = deck?.name || r.deckId;
+    lbl.textContent = deck?.name || r.deckId;
+
+    const actualWrap = document.createElement('div');
+    actualWrap.innerHTML = `<div style="font-size:10px;color:var(--text-muted);margin-bottom:2px">${r.actualShare.toFixed(1)}%</div><div class="intel-bar-wrap"><div class="intel-bar-actual" style="width:${(r.actualShare/maxShare*100).toFixed(1)}%"></div></div>`;
+
+    const nashWrap = document.createElement('div');
+    nashWrap.innerHTML = `<div style="font-size:10px;color:var(--text-muted);margin-bottom:2px">${r.nashShare.toFixed(1)}%</div><div class="intel-bar-wrap"><div class="intel-bar-nash" style="width:${(r.nashShare/maxShare*100).toFixed(1)}%"></div></div>`;
+
+    const tag = document.createElement('div');
+    const badge = document.createElement('span');
+    badge.className = `intel-tag-badge ${r.behavioralTag}`;
+    badge.textContent = r.behavioralTag.replace(/_/g, ' ');
+    tag.appendChild(badge);
+
+    row.appendChild(lbl);
+    row.appendChild(actualWrap);
+    row.appendChild(nashWrap);
+    row.appendChild(tag);
+    el.appendChild(row);
+  });
+}
+
+/* ── Top EV Picks (Section B) ───────────────────────────────────────── */
+function renderEVPicks(report) {
+  const el = document.getElementById('intel-section-ev');
+  if (!el) return;
+
+  const title = document.createElement('div');
+  title.className = 'intel-section-title';
+  title.textContent = 'Top EV Picks — Underplayed Value';
+  el.appendChild(title);
+
+  if (!report.topEVPicks.length) {
+    const empty = document.createElement('p');
+    empty.style.cssText = 'color:var(--text-muted);font-size:13px';
+    empty.textContent = 'No HIDDEN_GEM decks detected in current meta.';
+    el.appendChild(empty);
+    return;
+  }
+
+  const grid = document.createElement('div');
+  grid.className = 'intel-ev-grid';
+
+  report.topEVPicks.forEach(d => {
+    const deck = META_SNAPSHOT.find(m => m.id === d.deckId);
+    const tier = deck?.tier || '?';
+
+    const card = document.createElement('div');
+    card.className = 'intel-ev-card';
+
+    const tierColors = { S: 'var(--gold)', A: 'var(--purple)', B: 'var(--cyan)', C: 'var(--text-muted)' };
+    card.innerHTML = `
+      <div class="intel-ev-card-header">
+        <div class="intel-ev-name">${deck?.name || d.deckId}</div>
+        <span style="font-family:var(--font-display);font-size:10px;font-weight:700;color:${tierColors[tier]||'var(--text-muted)'}">${tier}</span>
+        <div class="intel-ev-undervalued">+${d.biasScore.toFixed(1)} undervalued</div>
+      </div>
+      <div class="intel-ev-advice">${d.ladderAdvice}</div>
+      <div class="intel-ev-stats">
+        <span>WR: <strong style="color:var(--text-primary)">${d.winRate.toFixed(1)}%</strong></span>
+        <span>Play rate: <strong style="color:var(--text-primary)">${d.actualShare.toFixed(1)}%</strong></span>
+        <span>Nash: <strong style="color:var(--purple)">${d.nashShare.toFixed(1)}%</strong></span>
+      </div>
+    `;
+    grid.appendChild(card);
+  });
+
+  el.appendChild(grid);
+}
+
+/* ── Deck Intelligence Panel (Section C) ───────────────────────────── */
+function renderDeckPanel(report, deckId) {
+  const el = document.getElementById('intel-section-deck');
+  if (!el) return;
+  el.innerHTML = '';
+
+  const panel = document.createElement('div');
+  panel.className = 'intel-deck-panel';
+
+  // Section title + select
+  const titleEl = document.createElement('div');
+  titleEl.className = 'intel-section-title';
+  titleEl.textContent = 'Deck Intelligence Panel';
+  panel.appendChild(titleEl);
+
+  const selectWrap = document.createElement('div');
+  selectWrap.className = 'intel-deck-select-wrap';
+  const select = document.createElement('select');
+  select.className = 'intel-deck-select';
+  META_SNAPSHOT.forEach(d => {
+    const opt = document.createElement('option');
+    opt.value = d.id;
+    opt.textContent = d.name || d.id;
+    if (d.id === deckId) opt.selected = true;
+    select.appendChild(opt);
+  });
+  select.addEventListener('change', () => renderDeckPanel(report, select.value));
+  selectWrap.appendChild(select);
+  panel.appendChild(selectWrap);
+
+  const data = report.perDeck[deckId];
+  if (!data) {
+    panel.innerHTML += '<p style="color:var(--text-muted);font-size:13px">No data for this deck.</p>';
+    el.appendChild(panel);
+    return;
+  }
+
+  const deck = META_SNAPSHOT.find(d => d.id === deckId);
+
+  // Row 1: signal chips
+  const signals = document.createElement('div');
+  signals.className = 'intel-signals-row';
+
+  function chip(label, value, color) {
+    const c = document.createElement('div');
+    c.className = 'intel-signal-chip';
+    c.innerHTML = `<span class="intel-signal-label">${label}</span><span class="intel-signal-value" style="color:${color||'var(--text-primary)'}">${value}</span>`;
+    return c;
+  }
+
+  const riskColors = { LOW: 'var(--green)', MEDIUM: 'var(--gold)', HIGH: 'var(--red)' };
+  signals.appendChild(chip('Behavioral', data.behavioralTag.replace(/_/g,' ').slice(0,12), 'var(--cyan)'));
+  signals.appendChild(chip('ESS Score', data.essScore, data.isESS ? 'var(--green)' : 'var(--text-primary)'));
+  signals.appendChild(chip('Format Fit', data.formatScore, 'var(--purple)'));
+  signals.appendChild(chip('Ext. Risk', data.extinctionRisk, riskColors[data.extinctionRisk]));
+  signals.appendChild(chip('Rank', '#' + data.overallRank, 'var(--text-muted)'));
+  panel.appendChild(signals);
+
+  // Row 2: ladder advice
+  if (data.ladderAdvice) {
+    const advice = document.createElement('div');
+    advice.className = 'intel-advice-box';
+    advice.textContent = data.ladderAdvice;
+    panel.appendChild(advice);
+  }
+
+  // Row 3: one-line summary
+  const summary = document.createElement('div');
+  summary.className = 'intel-summary-box';
+  summary.textContent = data.oneLineSummary;
+  panel.appendChild(summary);
+
+  // Card contribution (Shapley)
+  if (data.shapley.cardValues.length) {
+    const shTitle = document.createElement('div');
+    shTitle.style.cssText = 'font-size:11px;font-weight:600;letter-spacing:.07em;color:var(--text-muted);text-transform:uppercase;margin-bottom:10px';
+    shTitle.textContent = 'Card Contributions (Shapley)';
+    panel.appendChild(shTitle);
+
+    const maxSV = Math.max(...data.shapley.cardValues.map(c => c.shapleyValue), 0.01);
+    const top5 = [...data.shapley.cardValues].sort((a, b) => b.shapleyValue - a.shapleyValue).slice(0, 5);
+
+    const shWrap = document.createElement('div');
+    shWrap.style.marginBottom = '20px';
+    top5.forEach(c => {
+      const row = document.createElement('div');
+      row.className = 'intel-shapley-row';
+
+      const isDead = c.role === 'DEADWEIGHT';
+      const barColor = isDead ? 'rgba(248,113,113,0.45)' : 'rgba(79,209,255,0.55)';
+
+      row.innerHTML = `
+        <div class="intel-shapley-name" title="${c.cardName}">${c.cardName}</div>
+        <div><span class="intel-role-badge ${c.role}">${c.role}</span></div>
+        <div class="intel-shapley-val">${c.shapleyValue}</div>
+        <div class="intel-shapley-bar-wrap"><div class="intel-shapley-bar" style="width:${Math.max(c.shapleyValue/maxSV*100,0).toFixed(1)}%;background:${barColor}"></div></div>
+      `;
+      shWrap.appendChild(row);
+    });
+    panel.appendChild(shWrap);
+  }
+
+  // Matchup section
+  const opponents = (window.MATCHUP_MATRIX || {})[deckId];
+  if (opponents && Object.keys(opponents).length) {
+    const mTitle = document.createElement('div');
+    mTitle.style.cssText = 'font-size:11px;font-weight:600;letter-spacing:.07em;color:var(--text-muted);text-transform:uppercase;margin-bottom:10px';
+    mTitle.textContent = 'Matchup Overview';
+    panel.appendChild(mTitle);
+
+    const mRow = document.createElement('div');
+    mRow.className = 'intel-matchup-row';
+
+    // Sort by win rate desc
+    Object.entries(opponents)
+      .sort((a, b) => b[1] - a[1])
+      .forEach(([oppId, wr]) => {
+        const oppDeck = META_SNAPSHOT.find(d => d.id === oppId);
+        const pct = Math.round(wr * 100);
+        const chip = document.createElement('div');
+        chip.className = 'intel-matchup-chip';
+
+        // Color: same gradient as matchup table
+        let bg;
+        if (wr <= 0.4) {
+          const t = Math.max(0, wr / 0.4);
+          const r = Math.round(239 + (251-239)*t), g = Math.round(68 + (191-68)*t), b = Math.round(68 + (36-68)*t);
+          bg = `rgba(${r},${g},${b},0.25)`;
+        } else {
+          const t = Math.min((wr - 0.4) / 0.2, 1);
+          const r = Math.round(251 + (74-251)*t), g = Math.round(191 + (222-191)*t), b = Math.round(36 + (128-36)*t);
+          bg = `rgba(${r},${g},${b},0.25)`;
+        }
+
+        const shortName = (oppDeck?.name || oppId).slice(0, 10);
+        chip.innerHTML = `<span class="intel-matchup-name" title="${oppDeck?.name||oppId}">${shortName}</span><span class="intel-matchup-pct" style="color:${wr>=0.5?'var(--green)':'var(--red)'}">${pct}%</span>`;
+        chip.style.background = bg;
+        mRow.appendChild(chip);
+      });
+    panel.appendChild(mRow);
+  }
+
+  el.appendChild(panel);
+}
+
+/* ── Render all sections & unhide ────────────────────────────────────── */
+renderNashChart(INTELLIGENCE_REPORT);
+renderEVPicks(INTELLIGENCE_REPORT);
+// Default deck: highest win-rate deck
+const defaultDeck = [...META_SNAPSHOT].sort((a, b) => b.winRate - a.winRate)[0];
+renderDeckPanel(INTELLIGENCE_REPORT, defaultDeck?.id || META_SNAPSHOT[0]?.id);
+
+document.getElementById('intel-loading').style.display = 'none';
+document.getElementById('intel-content').style.display = '';
+
+console.log('[Intelligence] All sections rendered');
 </script>
 
 <!-- Simulate vs Meta Modal -->
