@@ -4,7 +4,8 @@ import { scoreDeck, analyzeDeck, suggestSwaps,
          solveNash, compareToActualMeta,
          detectBehavioralBias, getTopEVPicks,
          scoreEvolutionaryStability, simulateMetaShift,
-         computeShapley, suggestShapleySwaps } from './index.js';
+         computeShapley, suggestShapleySwaps,
+         analyzeFormatFit, compareFormatFitAcrossMeta } from './index.js';
 
 const require = createRequire(import.meta.url);
 const detail  = require('../cards-detail.json');
@@ -499,3 +500,82 @@ if (shapleySwaps.shapleySwaps.length) {
 } else {
   console.log('   (no beneficial swaps found)');
 }
+
+// ─── Phase 9 validation: analyzeFormatFit ────────────────────────────────────
+console.log('\n=== Phase 9 validation: analyzeFormatFit (Mechanism Design) ===');
+
+// 1. Full constraint breakdown for mimikyu-ex-greninja
+console.log('\n1. analyzeFormatFit() on mimikyu-ex-greninja:');
+const formatResult = analyzeFormatFit(mimikyuDeck.cards, REG);
+console.log(`   formatScore: ${formatResult.formatScore}`);
+console.log('   Constraints:');
+for (const [key, val] of Object.entries(formatResult.constraints)) {
+  console.log(`     ${key.padEnd(20)} score=${String(val.score).padEnd(6)} "${val.insight}"`);
+}
+console.log(`   openingHand: idealSetupPct=${formatResult.openingHand.idealSetupPct}%  brickedPct=${formatResult.openingHand.brickedPct}%`);
+console.log(`   prizePaceEstimate: ${formatResult.prizePaceEstimate} turns`);
+
+// Check 1: formatScore in [0, 100]
+const fsInRange = formatResult.formatScore >= 0 && formatResult.formatScore <= 100;
+console.log(`\n2. formatScore in [0,100] (got ${formatResult.formatScore}) → ${fsInRange ? 'PASS ✓' : 'FAIL ✗'}`);
+
+// Check 2: idealSetupPct + brickedPct ≈ 100 (±0.1)
+const handSum = formatResult.openingHand.idealSetupPct + formatResult.openingHand.brickedPct;
+const handOK  = Math.abs(handSum - 100) <= 0.1;
+console.log(`3. idealSetupPct + brickedPct ≈ 100 (got ${handSum.toFixed(1)}) → ${handOK ? 'PASS ✓' : 'FAIL ✗'}`);
+
+// Check 3: prizePaceEstimate is a positive number
+const ppeOK = typeof formatResult.prizePaceEstimate === 'number' && formatResult.prizePaceEstimate > 0;
+console.log(`4. prizePaceEstimate > 0 (got ${formatResult.prizePaceEstimate}) → ${ppeOK ? 'PASS ✓' : 'FAIL ✗'}`);
+
+// 2. compareFormatFitAcrossMeta on full META_SNAPSHOT
+console.log('\n5. compareFormatFitAcrossMeta() — all 20 decks ranked by formatScore:');
+const formatRanking = compareFormatFitAcrossMeta(META_SNAPSHOT, REG);
+console.log('   ' + 'rank  deckId'.padEnd(40) + 'format'.padStart(8) + '  pace'.padStart(7) + '  ideal%'.padStart(9) + '  brick%');
+console.log('   ' + '─'.repeat(74));
+formatRanking.forEach((d, i) => {
+  const rank  = `#${i + 1}`.padEnd(6);
+  const id    = d.deckId.padEnd(34);
+  const fs    = String(d.formatScore).padStart(8);
+  const pace  = String(d.prizePaceEstimate).padStart(7);
+  const ideal = (d.openingHand.idealSetupPct + '%').padStart(9);
+  const brick = (d.openingHand.brickedPct + '%').padStart(7);
+  console.log(`   ${rank}${id}${fs}${pace}${ideal}${brick}`);
+});
+
+console.log('\n   Top 3 format fits:');
+formatRanking.slice(0, 3).forEach((d, i) =>
+  console.log(`     #${i + 1} ${d.deckId}  (${d.formatScore})`)
+);
+console.log('   Bottom 3 format fits:');
+formatRanking.slice(-3).forEach((d, i) =>
+  console.log(`     #${formatRanking.length - 2 + i} ${d.deckId}  (${d.formatScore})`)
+);
+
+// Check 4: all formatScores in [0, 100]
+const allFsOK = formatRanking.every(d => d.formatScore >= 0 && d.formatScore <= 100);
+console.log(`\n6. All formatScores in [0,100] → ${allFsOK ? 'PASS ✓' : 'FAIL ✗'}`);
+if (!allFsOK) {
+  formatRanking.filter(d => d.formatScore < 0 || d.formatScore > 100)
+    .forEach(d => console.log(`   FAIL: ${d.deckId} formatScore=${d.formatScore}`));
+}
+
+// Check 5: all 20 decks present
+const allPresent = formatRanking.length === META_SNAPSHOT.length;
+console.log(`7. All ${META_SNAPSHOT.length} decks present → ${allPresent ? 'PASS ✓' : 'FAIL ✗'} (got ${formatRanking.length})`);
+
+// ─── Final all-phases check ───────────────────────────────────────────────────
+console.log('\n=== Final all-phases check ===');
+const allPass = [
+  wrPass, cPass,        // Phase 1
+  mimikyuOK, lowestOK, // Phase 2
+  lowOK,               // Phase 3
+  !selfFound, antiOK, rangeOK,  // Phase 4
+  nashResult.converged, sumOK, allPos, countOK, // Phase 5
+  noUndefined, inRange, noPlaceholders, hasNumbers, // Phase 6
+  essInRange, riskOK, counterOK, shiftRangeOK,      // Phase 7
+  mvOK, wlOK, rolesOK, deterministicOK,             // Phase 8
+  fsInRange, handOK, ppeOK, allFsOK, allPresent,    // Phase 9
+];
+const passed = allPass.filter(Boolean).length;
+console.log(`${passed}/${allPass.length} checks passed ${passed === allPass.length ? '✓ ALL PASS' : '✗ SOME FAILED'}`);
