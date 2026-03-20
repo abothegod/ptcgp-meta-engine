@@ -1,6 +1,7 @@
 import { createRequire } from 'module';
 import { scoreDeck, analyzeDeck, suggestSwaps,
-         buildMatchupMatrix, getCounterDecks, getBestDeckVsField } from './index.js';
+         buildMatchupMatrix, getCounterDecks, getBestDeckVsField,
+         solveNash, compareToActualMeta } from './index.js';
 
 const require = createRequire(import.meta.url);
 const detail  = require('../cards-detail.json');
@@ -43,83 +44,83 @@ function expand(cards) {
 
 // ─── Full META_SNAPSHOT (all 20 decks, cards expanded) ───────────────────────
 const META_SNAPSHOT = [
-  { id: 'mimikyu-ex-greninja',         tier: 'A', winRate: 61.4,
+  { id: 'mimikyu-ex-greninja',         tier: 'A', winRate: 61.4,  popularity:  0.18,
     cards: expand([{id:'A1-087',qty:2},{id:'A1-088',qty:2},{id:'A1-089',qty:2},
                    {id:'B2-073',qty:2},{id:'P-A-005',qty:2},{id:'P-A-007',qty:2},
                    {id:'A1-220',qty:2},{id:'A1-225',qty:2},{id:'B2-191',qty:2},{id:'B1-225',qty:2}]) },
-  { id: 'magnezone-bellibolt-ex',       tier: 'A', winRate: 51.9,
+  { id: 'magnezone-bellibolt-ex',       tier: 'A', winRate: 51.9,  popularity: 11.81,
     cards: expand([{id:'B1a-024',qty:2},{id:'B1a-025',qty:2},{id:'B1a-026',qty:2},
                    {id:'B2a-041',qty:2},{id:'B2a-042',qty:2},{id:'P-A-005',qty:2},
                    {id:'P-A-007',qty:2},{id:'A1-223',qty:2},{id:'A1-225',qty:2},{id:'B2-191',qty:2}]) },
-  { id: 'mega-altaria-ex-gourgeist',    tier: 'A', winRate: 55.3,
+  { id: 'mega-altaria-ex-gourgeist',    tier: 'A', winRate: 55.3,  popularity:  4.41,
     cards: expand([{id:'B1-196',qty:2},{id:'B1-197',qty:2},{id:'B1-102',qty:2},
                    {id:'B2-071',qty:2},{id:'B2-072',qty:2},{id:'B2a-001',qty:2},
                    {id:'B2a-002',qty:2},{id:'P-A-005',qty:2},{id:'P-A-007',qty:2},{id:'A1-225',qty:2}]) },
-  { id: 'mega-altaria-ex-greninja',     tier: 'B', winRate: 48.9,
+  { id: 'mega-altaria-ex-greninja',     tier: 'B', winRate: 48.9,  popularity: 12.45,
     cards: expand([{id:'A1-087',qty:2},{id:'A1-088',qty:2},{id:'A1-089',qty:2},
                    {id:'B1-196',qty:2},{id:'B1-197',qty:2},{id:'B1-102',qty:2},
                    {id:'P-A-005',qty:2},{id:'P-A-007',qty:2},{id:'A1-225',qty:2},{id:'B2-191',qty:2}]) },
-  { id: 'greninja-mega-absol-ex',       tier: 'B', winRate: 51.3,
+  { id: 'greninja-mega-absol-ex',       tier: 'B', winRate: 51.3,  popularity:  8.33,
     cards: expand([{id:'A1-087',qty:2},{id:'A1-088',qty:2},{id:'A1-089',qty:2},
                    {id:'B1-150',qty:2},{id:'B1-151',qty:2},{id:'P-A-005',qty:2},
                    {id:'P-A-007',qty:2},{id:'A1-220',qty:2},{id:'A1-225',qty:2},{id:'B2-191',qty:2}]) },
-  { id: 'mega-altaria-ex',              tier: 'B', winRate: 54.7,
+  { id: 'mega-altaria-ex',              tier: 'B', winRate: 54.7,  popularity:  1.28,
     cards: expand([{id:'B1-196',qty:2},{id:'B1-197',qty:2},{id:'B1-102',qty:2},
                    {id:'P-A-005',qty:2},{id:'P-A-007',qty:2},{id:'A1-225',qty:2},
                    {id:'B2-191',qty:2},{id:'B1-225',qty:2},{id:'P-A-006',qty:2},{id:'A1-223',qty:2}]) },
-  { id: 'gourgeist-houndstone',         tier: 'B', winRate: 51.6,
+  { id: 'gourgeist-houndstone',         tier: 'B', winRate: 51.6,  popularity:  1.74,
     cards: expand([{id:'B2-071',qty:2},{id:'B2-072',qty:2},{id:'B2a-001',qty:2},
                    {id:'B2a-002',qty:2},{id:'P-A-005',qty:2},{id:'P-A-007',qty:2},
                    {id:'A1-225',qty:2},{id:'P-A-006',qty:2},{id:'B2-191',qty:2},{id:'B1-225',qty:2}]) },
-  { id: 'magnezone-mega-absol-ex',      tier: 'B', winRate: 55.4,
+  { id: 'magnezone-mega-absol-ex',      tier: 'B', winRate: 55.4,  popularity:  0.19,
     cards: expand([{id:'B1-150',qty:2},{id:'B1-151',qty:2},{id:'B1a-024',qty:2},
                    {id:'B1a-025',qty:2},{id:'B1a-026',qty:2},{id:'P-A-005',qty:2},
                    {id:'P-A-007',qty:2},{id:'A1-223',qty:2},{id:'A1-225',qty:2},{id:'B2-191',qty:2}]) },
-  { id: 'mega-altaria-ex-altaria-a',    tier: 'B', winRate: 54.9,
+  { id: 'mega-altaria-ex-altaria-a',    tier: 'B', winRate: 54.9,  popularity:  0.59,
     cards: expand([{id:'B1-196',qty:2},{id:'B1-197',qty:2},{id:'B1-102',qty:2},
                    {id:'P-A-005',qty:2},{id:'P-A-007',qty:2},{id:'A1-225',qty:2},
                    {id:'B2-191',qty:2},{id:'B1-225',qty:2},{id:'P-A-006',qty:2},{id:'A1-223',qty:2}]) },
-  { id: 'mega-absol-ex-darkrai-ex',     tier: 'B', winRate: 54.8,
+  { id: 'mega-absol-ex-darkrai-ex',     tier: 'B', winRate: 54.8,  popularity:  0.34,
     cards: expand([{id:'B1-150',qty:2},{id:'B1-151',qty:2},{id:'A2-109',qty:2},
                    {id:'A2-110',qty:2},{id:'P-A-005',qty:2},{id:'P-A-007',qty:2},
                    {id:'A1-223',qty:2},{id:'P-A-006',qty:2},{id:'A1-225',qty:2},{id:'B2-191',qty:2}]) },
-  { id: 'mega-altaria-ex-altaria-b',    tier: 'B', winRate: 54.3,
+  { id: 'mega-altaria-ex-altaria-b',    tier: 'B', winRate: 54.3,  popularity:  0.21,
     cards: expand([{id:'B1-196',qty:2},{id:'B1-197',qty:2},{id:'B1-102',qty:2},
                    {id:'P-A-005',qty:2},{id:'P-A-007',qty:2},{id:'A1-225',qty:2},
                    {id:'B2-191',qty:2},{id:'B1-225',qty:2},{id:'P-A-006',qty:2},{id:'A1-223',qty:2}]) },
-  { id: 'suicune-ex-baxcalibur',        tier: 'B', winRate: 47.1,
+  { id: 'suicune-ex-baxcalibur',        tier: 'B', winRate: 47.1,  popularity: 11.57,
     cards: expand([{id:'A4a-020',qty:2},{id:'B2a-034',qty:2},{id:'B2a-035',qty:2},
                    {id:'B2a-036',qty:2},{id:'P-A-005',qty:2},{id:'P-A-007',qty:2},
                    {id:'A1-220',qty:2},{id:'A1-225',qty:2},{id:'B2-191',qty:2},{id:'B1-225',qty:2}]) },
-  { id: 'bellibolt-ex-zeraora',         tier: 'B', winRate: 49.1,
+  { id: 'bellibolt-ex-zeraora',         tier: 'B', winRate: 49.1,  popularity:  5.68,
     cards: expand([{id:'B1-304',qty:2},{id:'B2a-041',qty:2},{id:'B2a-042',qty:2},
                    {id:'P-A-005',qty:2},{id:'P-A-007',qty:2},{id:'A1-223',qty:2},
                    {id:'A1-225',qty:2},{id:'B2-191',qty:2},{id:'B1-225',qty:2},{id:'P-A-006',qty:2}]) },
-  { id: 'hydreigon-mega-absol-ex',      tier: 'C', winRate: 48.1,
+  { id: 'hydreigon-mega-absol-ex',      tier: 'C', winRate: 48.1,  popularity:  3.96,
     cards: expand([{id:'B1-155',qty:2},{id:'B1-156',qty:2},{id:'B1-157',qty:2},
                    {id:'B1-150',qty:2},{id:'B1-151',qty:2},{id:'P-A-005',qty:2},
                    {id:'P-A-007',qty:2},{id:'A1-223',qty:2},{id:'P-A-006',qty:2},{id:'A1-225',qty:2}]) },
-  { id: 'mega-altaria-ex-chingling',    tier: 'C', winRate: 49.6,
+  { id: 'mega-altaria-ex-chingling',    tier: 'C', winRate: 49.6,  popularity:  1.68,
     cards: expand([{id:'B1-196',qty:2},{id:'B1-197',qty:2},{id:'B1-102',qty:2},
                    {id:'B1-109',qty:2},{id:'P-A-005',qty:2},{id:'P-A-007',qty:2},
                    {id:'A1-225',qty:2},{id:'B2-191',qty:2},{id:'B1-225',qty:2},{id:'P-A-006',qty:2}]) },
-  { id: 'leafeon-ex-teal-ogerpon-ex',   tier: 'C', winRate: 53.5,
+  { id: 'leafeon-ex-teal-ogerpon-ex',   tier: 'C', winRate: 53.5,  popularity:  0.56,
     cards: expand([{id:'P-A-005',qty:2},{id:'P-A-007',qty:2},{id:'A1-223',qty:2},
                    {id:'A1-225',qty:2},{id:'B2-191',qty:2},{id:'B1-225',qty:2},
                    {id:'P-A-006',qty:2},{id:'A1-220',qty:2},{id:'B1-109',qty:2},{id:'A3-034',qty:2}]) },
-  { id: 'mega-altaria-ex-banette',      tier: 'C', winRate: 53.1,
+  { id: 'mega-altaria-ex-banette',      tier: 'C', winRate: 53.1,  popularity:  0.29,
     cards: expand([{id:'B1-196',qty:2},{id:'B1-197',qty:2},{id:'B1-102',qty:2},
                    {id:'A3-074',qty:2},{id:'A3-075',qty:2},{id:'P-A-005',qty:2},
                    {id:'P-A-007',qty:2},{id:'A1-225',qty:2},{id:'B2-191',qty:2},{id:'B1-225',qty:2}]) },
-  { id: 'greninja-oricorio',            tier: 'C', winRate: 48.0,
+  { id: 'greninja-oricorio',            tier: 'C', winRate: 48.0,  popularity:  0.80,
     cards: expand([{id:'A1-087',qty:2},{id:'A1-088',qty:2},{id:'A1-089',qty:2},
                    {id:'A3-034',qty:2},{id:'P-A-005',qty:2},{id:'P-A-007',qty:2},
                    {id:'A1-220',qty:2},{id:'A1-225',qty:2},{id:'B2-191',qty:2},{id:'B1-225',qty:2}]) },
-  { id: 'giratina-ex-darkrai-ex',       tier: 'C', winRate: 53.2,
+  { id: 'giratina-ex-darkrai-ex',       tier: 'C', winRate: 53.2,  popularity:  0.54,
     cards: expand([{id:'A2-109',qty:2},{id:'A2-110',qty:2},{id:'A2b-035',qty:2},
                    {id:'P-A-005',qty:2},{id:'P-A-007',qty:2},{id:'A1-223',qty:2},
                    {id:'P-A-006',qty:2},{id:'A1-225',qty:2},{id:'B2-191',qty:2},{id:'B1-225',qty:2}]) },
-  { id: 'chandelure-meowth',            tier: 'C', winRate: 51.0,
+  { id: 'chandelure-meowth',            tier: 'C', winRate: 51.0,  popularity:  0.29,
     cards: expand([{id:'B2-067',qty:2},{id:'B2-068',qty:2},{id:'B2-069',qty:2},
                    {id:'P-A-005',qty:2},{id:'P-A-007',qty:2},{id:'A1-225',qty:2},
                    {id:'P-A-006',qty:2},{id:'B2-191',qty:2},{id:'B1-225',qty:2},{id:'A1-223',qty:2}]) },
@@ -296,3 +297,43 @@ counters.forEach(c => console.log(`   ${c.opponentId}  win-rate-against=${c.winR
 const bestVsField = getBestDeckVsField(matrixData).slice(0, 3);
 console.log('\n5. getBestDeckVsField() top 3:');
 bestVsField.forEach((d, i) => console.log(`   #${i+1} ${d.deckId}  avgWinRate=${d.avgWinRate}`));
+
+// ─── Phase 5 validation: solveNash ────────────────────────────────────────────
+console.log('\n=== Phase 5 validation: solveNash ===');
+
+const nashResult = solveNash(matrixData, META_SNAPSHOT);
+
+// 1. Converged
+console.log(`1. converged → ${nashResult.converged ? 'PASS ✓' : 'FAIL ✗'}`);
+console.log(`   iterations: ${nashResult.iterations}`);
+console.log(`   dominantStrategy: ${nashResult.dominantStrategy ?? 'none'}`);
+
+// 2. Shares sum to ≈ 1.0
+const shareSum = Object.values(nashResult.equilibriumShares).reduce((s, v) => s + v, 0);
+const sumOK = Math.abs(shareSum - 1.0) < 0.001;
+console.log(`2. Shares sum ≈ 1.0 (got ${shareSum.toFixed(6)}) → ${sumOK ? 'PASS ✓' : 'FAIL ✗'}`);
+
+// 3. All shares positive
+const allPos = Object.values(nashResult.equilibriumShares).every(v => v > 0);
+console.log(`3. All shares positive → ${allPos ? 'PASS ✓' : 'FAIL ✗'}`);
+
+// 4. compareToActualMeta output
+const comparison = compareToActualMeta(nashResult, META_SNAPSHOT);
+
+console.log('\n4. compareToActualMeta() — sorted by delta descending:');
+console.log('   deckId                          nash%   actual%   delta    signal');
+console.log('   ' + '─'.repeat(76));
+comparison.forEach(r => {
+  const id     = r.deckId.padEnd(34);
+  const nash   = String(r.nashShare.toFixed(1)).padStart(5);
+  const actual = String(r.actualShare.toFixed(1)).padStart(6);
+  const delta  = (r.delta >= 0 ? '+' : '') + r.delta.toFixed(1);
+  console.log(`   ${id} ${nash}%  ${actual}%  ${delta.padStart(6)}   ${r.signal}`);
+});
+
+// 5. Signal breakdown + count check
+const signals = { UNDERPICKED: 0, OVERPICKED: 0, BALANCED: 0 };
+comparison.forEach(r => signals[r.signal]++);
+const countOK = comparison.length === META_SNAPSHOT.length;
+console.log(`\n5. Signal breakdown: UNDERPICKED=${signals.UNDERPICKED}  OVERPICKED=${signals.OVERPICKED}  BALANCED=${signals.BALANCED}`);
+console.log(`   Total count ${comparison.length} === META_SNAPSHOT.length ${META_SNAPSHOT.length} → ${countOK ? 'PASS ✓' : 'FAIL ✗'}`);
