@@ -3,7 +3,8 @@ import { scoreDeck, analyzeDeck, suggestSwaps,
          buildMatchupMatrix, getCounterDecks, getBestDeckVsField,
          solveNash, compareToActualMeta,
          detectBehavioralBias, getTopEVPicks,
-         scoreEvolutionaryStability, simulateMetaShift } from './index.js';
+         scoreEvolutionaryStability, simulateMetaShift,
+         computeShapley, suggestShapleySwaps } from './index.js';
 
 const require = createRequire(import.meta.url);
 const detail  = require('../cards-detail.json');
@@ -441,3 +442,60 @@ const shiftRangeOK = shiftResult.results.every(
        r.essScoreAfter  >= 0 && r.essScoreAfter  <= 100
 );
 console.log(`\n7. All essScoreBefore/After in [0,100] → ${shiftRangeOK ? 'PASS ✓' : 'FAIL ✗'}`);
+
+// ─── Phase 8 validation: computeShapley ──────────────────────────────────────
+console.log('\n=== Phase 8 validation: computeShapley ===');
+
+// 1. Run on highest win-rate deck (mimikyu-ex-greninja)
+console.time('computeShapley sampleSize=200');
+const shapleyResult = computeShapley(mimikyuDeck.cards, REG, 200, mimikyuDeck.id);
+console.timeEnd('computeShapley sampleSize=200');
+
+// 2. Full cardValues table
+console.log('\n1. cardValues table:');
+console.log('   ' + 'cardId'.padEnd(14) + 'name'.padEnd(22) + 'shapley'.padStart(9) + '  role'.padEnd(14) + '  replaceable');
+console.log('   ' + '─'.repeat(66));
+shapleyResult.cardValues.forEach(c => {
+  const id   = c.cardId.padEnd(14);
+  const name = c.cardName.padEnd(22);
+  const sv   = String(c.shapleyValue).padStart(9);
+  const role = c.role.padEnd(14);
+  console.log(`   ${id}${name}${sv}  ${role}  ${c.replaceable}`);
+});
+console.log(`   baseScore: ${shapleyResult.baseScore}`);
+console.log(`   mostValuableCard: ${shapleyResult.mostValuableCard}`);
+console.log(`   weakestLink:      ${shapleyResult.weakestLink}`);
+
+// 3. mostValuableCard and weakestLink are valid cardIds
+const validIds = new Set(shapleyResult.cardValues.map(c => c.cardId));
+const mvOK = validIds.has(shapleyResult.mostValuableCard);
+const wlOK = validIds.has(shapleyResult.weakestLink);
+console.log(`\n2. mostValuableCard is valid cardId → ${mvOK ? 'PASS ✓' : 'FAIL ✗'}`);
+console.log(`   weakestLink is valid cardId      → ${wlOK ? 'PASS ✓' : 'FAIL ✗'}`);
+
+// 4. All roles valid
+const validRoleSet = new Set(['CORE','SUPPORT','FLEX','DEADWEIGHT']);
+const rolesOK = shapleyResult.cardValues.every(c => validRoleSet.has(c.role));
+console.log(`3. All roles valid → ${rolesOK ? 'PASS ✓' : 'FAIL ✗'}`);
+
+// 5. Deterministic: same deck, same output
+const shapleyResult2 = computeShapley(mimikyuDeck.cards, REG, 200, mimikyuDeck.id);
+const deterministicOK = shapleyResult.cardValues.every((c, i) =>
+  c.shapleyValue === shapleyResult2.cardValues[i].shapleyValue
+);
+console.log(`4. Deterministic (same output on re-run) → ${deterministicOK ? 'PASS ✓' : 'FAIL ✗'}`);
+
+// 6. suggestShapleySwaps on lowest-scored deck
+const lowestSwapSnap = META_SNAPSHOT.find(d => d.id === lowestDeck.id);
+console.log(`\n5. suggestShapleySwaps() on lowest-scored deck: ${lowestSwapSnap.id}`);
+console.time('suggestShapleySwaps');
+const shapleySwaps = suggestShapleySwaps(lowestSwapSnap.cards, REG, 200);
+console.timeEnd('suggestShapleySwaps');
+if (shapleySwaps.shapleySwaps.length) {
+  shapleySwaps.shapleySwaps.forEach((s, i) => {
+    console.log(`   #${i + 1} remove ${s.removeName} (Shapley=${s.removeShapleyValue}) → add ${s.addName}`);
+    console.log(`      ${s.reason}`);
+  });
+} else {
+  console.log('   (no beneficial swaps found)');
+}
