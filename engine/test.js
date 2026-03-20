@@ -1,7 +1,8 @@
 import { createRequire } from 'module';
 import { scoreDeck, analyzeDeck, suggestSwaps,
          buildMatchupMatrix, getCounterDecks, getBestDeckVsField,
-         solveNash, compareToActualMeta } from './index.js';
+         solveNash, compareToActualMeta,
+         detectBehavioralBias, getTopEVPicks } from './index.js';
 
 const require = createRequire(import.meta.url);
 const detail  = require('../cards-detail.json');
@@ -337,3 +338,44 @@ comparison.forEach(r => signals[r.signal]++);
 const countOK = comparison.length === META_SNAPSHOT.length;
 console.log(`\n5. Signal breakdown: UNDERPICKED=${signals.UNDERPICKED}  OVERPICKED=${signals.OVERPICKED}  BALANCED=${signals.BALANCED}`);
 console.log(`   Total count ${comparison.length} === META_SNAPSHOT.length ${META_SNAPSHOT.length} → ${countOK ? 'PASS ✓' : 'FAIL ✗'}`);
+
+// ─── Phase 6 validation: detectBehavioralBias ────────────────────────────────
+console.log('\n=== Phase 6 validation: detectBehavioralBias ===');
+
+const biasData = detectBehavioralBias(comparison, META_SNAPSHOT);
+
+// 1. Full table
+console.log('\n1. Full bias table (sorted by biasScore descending):');
+console.log('   ' + 'deckId'.padEnd(34) + 'tag'.padEnd(26) + 'bias'.padStart(6) + '  delta'.padStart(8) + '  actual%'.padStart(9) + '  wr%'.padStart(7));
+console.log('   ' + '─'.repeat(88));
+biasData.forEach(d => {
+  const id    = d.deckId.padEnd(34);
+  const tag   = d.behavioralTag.padEnd(26);
+  const bias  = String(d.biasScore).padStart(6);
+  const delta = ((d.delta >= 0 ? '+' : '') + d.delta.toFixed(1)).padStart(8);
+  const act   = (d.actualShare.toFixed(1) + '%').padStart(9);
+  const wr    = (d.winRate.toFixed(1) + '%').padStart(7);
+  console.log(`   ${id}${tag}${bias}${delta}${act}${wr}`);
+});
+
+// 2. No undefined tags
+const noUndefined = biasData.every(d => d.behavioralTag !== undefined);
+console.log(`\n2. No undefined behavioralTag → ${noUndefined ? 'PASS ✓' : 'FAIL ✗'}`);
+
+// 3. All biasScores in [-100, +100]
+const inRange = biasData.every(d => d.biasScore >= -100 && d.biasScore <= 100);
+console.log(`3. All biasScores in [-100,+100] → ${inRange ? 'PASS ✓' : 'FAIL ✗'}`);
+
+// 4. Top EV picks
+const evPicks = getTopEVPicks(biasData, 3);
+console.log('\n4. getTopEVPicks() top 3:');
+evPicks.forEach((d, i) => {
+  console.log(`   #${i + 1} [${d.behavioralTag}] biasScore=${d.biasScore}  ${d.deckId}`);
+  console.log(`      ${d.ladderAdvice}`);
+});
+
+// 5. ladderAdvice contains real numbers (no placeholder braces)
+const noPlaceholders = biasData.every(d => !d.ladderAdvice.includes('{') && !d.ladderAdvice.includes('}'));
+const hasNumbers     = biasData.every(d => /\d/.test(d.ladderAdvice));
+console.log(`\n5. ladderAdvice has no placeholders → ${noPlaceholders ? 'PASS ✓' : 'FAIL ✗'}`);
+console.log(`   ladderAdvice contains real numbers  → ${hasNumbers     ? 'PASS ✓' : 'FAIL ✗'}`);
