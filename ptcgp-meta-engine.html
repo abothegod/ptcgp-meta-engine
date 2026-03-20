@@ -8593,6 +8593,226 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 </script>
 
+<!-- ═══════════════════════════════════════════════════════
+     TRACK A ENGINE — module script
+     Imports scoreDeck / analyzeDeck / suggestSwaps and wires
+     results into the dashboard without touching existing code.
+════════════════════════════════════════════════════════ -->
+<script type="module">
+import { scoreDeck, analyzeDeck, suggestSwaps } from './engine/index.js';
+
+/* ── Registry field-mismatch detection ────────────────────────────── */
+const sampleCard = Object.values(CARD_REGISTRY)[0] || {};
+const engineFields = ['stage','hp','retreatCost','attacks','abilities'];
+const missingFields = engineFields.filter(f => !(f in sampleCard));
+if (missingFields.length) {
+  console.warn('[Engine] CARD_REGISTRY missing fields:', missingFields.join(', '));
+  console.warn('[Engine] Aliasing: stage ← FULL_CARD_DB  |  hp/attacks/abilities ← cards-detail.json');
+}
+
+/* ── Build enriched ENGINE_REG ─────────────────────────────────────── */
+const detail = await fetch('./cards-detail.json').then(r => r.json());
+const fullDbById = Object.fromEntries(FULL_CARD_DB.map(c => [c.id, c]));
+
+const ENGINE_REG = {};
+for (const id of Object.keys(CARD_REGISTRY)) {
+  const full = fullDbById[id] ?? {};
+  const d    = detail[id]    ?? {};
+  ENGINE_REG[id] = {
+    ...CARD_REGISTRY[id],              // name, type, pack, rarity
+    stage:       full.stage ?? null,
+    hp:          d.hp          ?? full.hp          ?? null,
+    retreatCost: d.retreatCost ?? full.retreatCost ?? 0,
+    attacks:     d.attacks     ?? full.attacks     ?? [],
+    abilities:   d.abilities   ?? full.abilities   ?? [],
+  };
+}
+
+/* ── Helper: expand {id, qty}[] → flat card-ID array ──────────────── */
+function expand(cards) {
+  return cards.flatMap(({ id, qty }) => Array(qty).fill(id));
+}
+
+/* ── Run engine over full META_SNAPSHOT ────────────────────────────── */
+console.time('[Engine] full META_SNAPSHOT computation');
+const engineResults = META_SNAPSHOT.map(deck => ({
+  ...deck,
+  analysis:    analyzeDeck(expand(deck.cards), ENGINE_REG),
+  suggestions: suggestSwaps(expand(deck.cards), ENGINE_REG),
+}));
+console.timeEnd('[Engine] full META_SNAPSHOT computation');
+console.log('[Engine] Results loaded:', engineResults.length, 'decks');
+
+/* Expose globally (used by patched openModal) */
+window.engineResults = engineResults;
+
+/* ── Inject styles ─────────────────────────────────────────────────── */
+const style = document.createElement('style');
+style.textContent = `
+.health-badge {
+  display: inline-flex; align-items: center;
+  padding: 2px 8px; border-radius: 999px;
+  font-size: 10px; font-weight: 700;
+  letter-spacing: .07em; font-family: var(--font-display);
+  white-space: nowrap; flex-shrink: 0;
+}
+.health-badge.solid       { background:rgba(74,222,128,.13); color:#4ade80; border:1px solid rgba(74,222,128,.3); }
+.health-badge.needs-work  { background:rgba(251,191,36,.12); color:#fbbf24; border:1px solid rgba(251,191,36,.3); }
+.health-badge.problematic { background:rgba(248,113,113,.12); color:#f87171; border:1px solid rgba(248,113,113,.3); }
+
+.engine-section { margin-top: 24px; }
+.engine-weakness-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 7px 0; border-bottom: 1px solid var(--border-subtle);
+  font-size: 13px;
+}
+.engine-weakness-row:last-child { border-bottom: none; }
+.engine-severity-tag {
+  flex-shrink: 0; padding: 2px 7px; border-radius: 4px;
+  font-size: 10px; font-weight: 700; letter-spacing: .08em;
+  font-family: var(--font-display);
+}
+.engine-severity-tag.WARNING  { background:rgba(251,191,36,.15); color:#fbbf24; border:1px solid rgba(251,191,36,.3); }
+.engine-severity-tag.CRITICAL { background:rgba(248,113,113,.15); color:#f87171; border:1px solid rgba(248,113,113,.3); }
+.engine-swap-row {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 10px 12px; background: var(--bg-elevated);
+  border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);
+  font-size: 13px;
+}
+.engine-swap-cards { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.engine-swap-remove { color: var(--red);   font-weight: 500; }
+.engine-swap-add    { color: var(--green); font-weight: 500; }
+.engine-swap-arrow  { color: var(--text-muted); }
+.engine-swap-reason { color: var(--text-secondary); font-size: 12px; font-weight: 300; }
+.engine-swap-delta  { margin-left: auto; font-size: 11px; color: var(--green); font-weight: 600; }
+`;
+document.head.appendChild(style);
+
+/* ── Badge helper ─────────────────────────────────────────────────── */
+function healthBadge(label) {
+  const cls = label === 'SOLID' ? 'solid' : label === 'NEEDS WORK' ? 'needs-work' : 'problematic';
+  const b = document.createElement('span');
+  b.className = `health-badge ${cls}`;
+  b.textContent = label;
+  return b;
+}
+
+/* ── Stamp badges onto already-rendered deck tiles ────────────────── */
+function stampBadges() {
+  document.querySelectorAll('[data-deck-id]').forEach(tile => {
+    if (tile.querySelector('.health-badge')) return;          // already stamped
+    const result = engineResults.find(r => r.id === tile.dataset.deckId);
+    if (!result) return;
+    const row = tile.querySelector('.deck-meta-row');
+    if (row) row.appendChild(healthBadge(result.analysis.healthLabel));
+  });
+}
+
+stampBadges();
+
+/* Re-stamp whenever the dashboard re-renders deck tiles */
+new MutationObserver(stampBadges)
+  .observe(document.body, { childList: true, subtree: true });
+
+/* ── Patch openModal to inject Deck Health section ────────────────── */
+const _origOpenModal = window.openModal;
+window.openModal = function (deck) {
+  _origOpenModal(deck);
+
+  const result = engineResults.find(r => r.id === deck.id);
+  if (!result) return;
+
+  const { analysis, suggestions } = result;
+  const body = document.getElementById('modal-body');
+
+  /* --- build section --- */
+  const section = document.createElement('div');
+  section.className = 'engine-section';
+
+  // Title
+  const title = document.createElement('div');
+  title.className = 'modal-section-title';
+  title.style.marginTop = '0';
+  title.textContent = 'Deck Health';
+  section.appendChild(title);
+
+  // Summary: badge + severity
+  const summary = document.createElement('div');
+  summary.style.cssText = 'display:flex;align-items:center;gap:10px;margin:10px 0 14px';
+  summary.appendChild(healthBadge(analysis.healthLabel));
+  const sev = document.createElement('span');
+  sev.style.cssText = 'font-size:12px;color:var(--text-muted)';
+  sev.textContent = `severity: ${analysis.overallSeverity} / 100`;
+  summary.appendChild(sev);
+  section.appendChild(summary);
+
+  // Weaknesses
+  if (analysis.weaknesses.length) {
+    const wWrap = document.createElement('div');
+    wWrap.style.marginBottom = '16px';
+    analysis.weaknesses.forEach(w => {
+      const row = document.createElement('div');
+      row.className = 'engine-weakness-row';
+      const tag = document.createElement('span');
+      tag.className = `engine-severity-tag ${w.severity}`;
+      tag.textContent = w.severity;
+      const msg = document.createElement('span');
+      msg.style.color = 'var(--text-secondary)';
+      msg.textContent = w.message;
+      row.appendChild(tag);
+      row.appendChild(msg);
+      wWrap.appendChild(row);
+    });
+    section.appendChild(wWrap);
+  } else {
+    const none = document.createElement('p');
+    none.style.cssText = 'font-size:13px;color:var(--text-secondary);margin-bottom:16px';
+    none.textContent = 'No weaknesses detected.';
+    section.appendChild(none);
+  }
+
+  // Swap suggestions (top 2)
+  const top2 = suggestions.suggestions.slice(0, 2);
+  if (top2.length) {
+    const swapLabel = document.createElement('div');
+    swapLabel.style.cssText = 'font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--text-muted);text-transform:uppercase;margin-bottom:8px';
+    swapLabel.textContent = 'Suggested Swaps';
+    section.appendChild(swapLabel);
+
+    const swapList = document.createElement('div');
+    swapList.style.cssText = 'display:flex;flex-direction:column;gap:8px';
+    top2.forEach(s => {
+      const row = document.createElement('div');
+      row.className = 'engine-swap-row';
+      const cards = document.createElement('div');
+      cards.className = 'engine-swap-cards';
+      cards.innerHTML =
+        `<span class="engine-swap-remove">− ${s.removeName}</span>` +
+        `<span class="engine-swap-arrow">→</span>` +
+        `<span class="engine-swap-add">+ ${s.addName}</span>` +
+        `<span class="engine-swap-delta">+${s.scoreDelta} pts</span>`;
+      const reason = document.createElement('div');
+      reason.className = 'engine-swap-reason';
+      reason.textContent = s.reason;
+      row.appendChild(cards);
+      row.appendChild(reason);
+      swapList.appendChild(row);
+    });
+    section.appendChild(swapList);
+  }
+
+  /* Insert before "Share Decklist" — find last modal-section-title with that text */
+  const allTitles = body.querySelectorAll('.modal-section-title');
+  const shareTitle = [...allTitles].find(el => el.textContent.trim() === 'Share Decklist');
+  if (shareTitle) {
+    body.insertBefore(section, shareTitle);
+  } else {
+    body.appendChild(section);
+  }
+};
+</script>
+
 <!-- Simulate vs Meta Modal -->
 <div id="sim-modal" role="dialog" aria-modal="true" aria-labelledby="sim-modal-title">
   <div id="sim-modal-box">
