@@ -8599,7 +8599,8 @@ document.addEventListener("DOMContentLoaded", () => {
      results into the dashboard without touching existing code.
 ════════════════════════════════════════════════════════ -->
 <script type="module">
-import { scoreDeck, analyzeDeck, suggestSwaps } from './engine/index.js';
+import { scoreDeck, analyzeDeck, suggestSwaps,
+         buildMatchupMatrix, getCounterDecks, getBestDeckVsField } from './engine/index.js';
 
 /* ── Registry field-mismatch detection ────────────────────────────── */
 const sampleCard = Object.values(CARD_REGISTRY)[0] || {};
@@ -8645,6 +8646,16 @@ console.log('[Engine] Results loaded:', engineResults.length, 'decks');
 
 /* Expose globally (used by patched openModal) */
 window.engineResults = engineResults;
+
+/* ── Build and populate MATCHUP_MATRIX ─────────────────────────────── */
+const matrixData = buildMatchupMatrix(META_SNAPSHOT, ENGINE_REG);
+Object.assign(MATCHUP_MATRIX, matrixData);
+
+// If user is already on matchups tab, re-render immediately
+if (typeof renderMatchups === 'function') renderMatchups();
+
+console.log('[Engine] Matchup matrix populated:', Object.keys(matrixData).length, 'decks');
+console.log('[Engine] Best vs field:', getBestDeckVsField(matrixData).slice(0, 3));
 
 /* ── Inject styles ─────────────────────────────────────────────────── */
 const style = document.createElement('style');

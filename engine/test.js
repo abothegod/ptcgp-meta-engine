@@ -1,5 +1,6 @@
 import { createRequire } from 'module';
-import { scoreDeck, analyzeDeck, suggestSwaps } from './index.js';
+import { scoreDeck, analyzeDeck, suggestSwaps,
+         buildMatchupMatrix, getCounterDecks, getBestDeckVsField } from './index.js';
 
 const require = createRequire(import.meta.url);
 const detail  = require('../cards-detail.json');
@@ -247,3 +248,51 @@ const highSuggestions = suggestSwaps(mimikyuDeck.cards, REG);
 console.timeEnd('suggestSwaps case 2');
 console.log(JSON.stringify(highSuggestions, null, 2));
 console.log(`suggestions=${highSuggestions.suggestions.length} → PASS ✓ (0 or small scoreDelta acceptable)`);
+
+// ─── Phase 4 validation: buildMatchupMatrix ───────────────────────────────────
+console.log('\n=== Phase 4 validation: buildMatchupMatrix ===');
+
+const matrixData = buildMatchupMatrix(META_SNAPSHOT, REG);
+const deckIds    = Object.keys(matrixData);
+console.log(`Matrix covers ${deckIds.length} decks, ${deckIds.length * (deckIds.length - 1)} cells`);
+
+// 1. No self-matchups
+let selfFound = false;
+for (const id of deckIds) {
+  if (id in matrixData[id]) { console.error(`FAIL: self-matchup found for ${id}`); selfFound = true; }
+}
+console.log(`1. No self-matchups → ${selfFound ? 'FAIL ✗' : 'PASS ✓'}`);
+
+// 2. Antisymmetry: matrixData[A][B] + matrixData[B][A] ≈ 1.0 (±0.01)
+let antiOK = true;
+for (const idA of deckIds) {
+  for (const idB of deckIds) {
+    if (idA === idB) continue;
+    const sum = (matrixData[idA][idB] ?? 0) + (matrixData[idB][idA] ?? 0);
+    if (Math.abs(sum - 1.0) > 0.01) {
+      console.error(`FAIL antisymmetry: ${idA} vs ${idB} sums to ${sum.toFixed(4)}`);
+      antiOK = false;
+    }
+  }
+}
+console.log(`2. Antisymmetry (A+B≈1.0) → ${antiOK ? 'PASS ✓' : 'FAIL ✗'}`);
+
+// 3. All values in [0,1]
+let rangeOK = true;
+for (const idA of deckIds) {
+  for (const [idB, v] of Object.entries(matrixData[idA])) {
+    if (v < 0 || v > 1) { console.error(`FAIL range: ${idA} vs ${idB} = ${v}`); rangeOK = false; }
+  }
+}
+console.log(`3. All values in [0,1] → ${rangeOK ? 'PASS ✓' : 'FAIL ✗'}`);
+
+// 4. getCounterDecks for highest win-rate deck
+const hwrId = mimikyuDeck.id;
+const counters = getCounterDecks(hwrId, matrixData, 3);
+console.log(`\n4. getCounterDecks("${hwrId}"):`);
+counters.forEach(c => console.log(`   ${c.opponentId}  win-rate-against=${c.winRateAgainst}`));
+
+// 5. getBestDeckVsField top 3
+const bestVsField = getBestDeckVsField(matrixData).slice(0, 3);
+console.log('\n5. getBestDeckVsField() top 3:');
+bestVsField.forEach((d, i) => console.log(`   #${i+1} ${d.deckId}  avgWinRate=${d.avgWinRate}`));
