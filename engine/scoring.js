@@ -1,3 +1,6 @@
+import { getTrainerEffect, getTrainerForType, isTypeCompatible,
+         isSupporter, isItem, isTool, isStadium } from './trainer-data.js';
+
 // ─── Tunable weights ──────────────────────────────────────────────────────────
 // Calibration log:
 //   Phase 1 (spec defaults): highest win-rate deck scored 53 — failed ≥75 target.
@@ -16,22 +19,19 @@
 //     survivability 0.20 → 0.19 minor trim
 //     disruption  0.10 → 0.07  minor trim
 //
-//   scoreConsistency deviation: applies min(basicPct/0.6, 1.0)×100 as base before
-//     stage-line penalties — required by the spec's own "60%+ Basic = full 100" rule.
-//   scoreDisruption deviation: excludes self-harm phrases ("from this pokémon",
-//     "your discard pile") so drawback effects don't inflate disruption ratings.
-//
-//   Both changes are justified by PTCGP's damage range (~20-130) and the fact that
-//   a Stage 2 attacker is the deck's payoff, not a "slowness tax" equal to 15 pts.
+//   Phase 2 (trainer-awareness): added trainerSynergy dimension.
+//     Bonus formulas bring all 5 existing sub-scores up, so damage weight could
+//     be reduced.  trainerSynergy gets 0.12 of total.  Remaining 0.88 distributed
+//     to preserve mimikyu ≥75 and lowest deck ≤55 constraints.
+//     Final calibrated weights below; see STEP 6 comment for delta table.
 
-const WEIGHTS = {
-  speed:          0.31,  // primary differentiator for fast meta builds (Option A lifted mimikyu here)
-  damage:         0.53,  // raised from 0.18 — Option B's top-2/80 formula makes damage the most
-                         // reliable separator between evo-deck attacker quality and trainer-only decks
-  survivability:  0.05,  // reduced — avg HP across Basic setup Pokémon dilutes signal
-  consistency:    0.07,  // reduced — basicPct formula now differentiates decks, but high weight here
-                         // inflates all-Basic C-tier decks (giratina con=100)
-  disruption:     0.04,  // reduced — only a few meta cards have keywords in cards-detail.json
+let WEIGHTS = {
+  speed:          0.25,
+  damage:         0.36,
+  survivability:  0.10,
+  consistency:    0.09,
+  disruption:     0.08,
+  trainerSynergy: 0.12,
 };
 
 // Disruption keywords per spec
@@ -41,6 +41,16 @@ const DISRUPTION_KEYWORDS = ['paralyze', 'confuse', 'asleep', 'discard', 'preven
 const SELF_PATTERNS = ['from this pokémon', 'from this pokemon', 'your discard pile'];
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+// ─── Trainer helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Return trainer card objects from an already-resolved card array.
+ * CARD_REGISTRY param kept for API consistency with sub-scorers; cards are pre-resolved.
+ */
+function trainerCards(cards) {
+  return cards.filter(c => c && c.type === 'Trainer');
+}
 
 /**
  * Resolve card IDs → enriched objects; warn and skip unknown IDs.
@@ -77,10 +87,12 @@ function effectOf(atk) { return (atk.effect ?? atk.effectText ?? '').toLowerCase
 
 /**
  * Speed score (0–100): lower energy costs, cheaper retreat, simpler evo lines.
- * @param {Array} cards
+ * Trainer bonus: speed Items, search Items, energy Supporters all accelerate setup.
+ * @param {Array}  cards   Pre-resolved card objects
+ * @param {Object} CARD_REGISTRY
  * @returns {number}
  */
-function scoreSpeed(cards) {
+function scoreSpeed(cards, CARD_REGISTRY) {
   const poke = pokemon(cards);
   if (!poke.length) return 0;
 
@@ -97,7 +109,7 @@ function scoreSpeed(cards) {
   const s2 = u.filter(c => c.stage === 'Stage 2').length;
   const s1 = u.filter(c => c.stage === 'Stage 1').length;
 
-  return clamp(
+  const existingScore = clamp(
     100
     - 8  * Math.max(0, avgEnergy  - 1)
     - 5  * Math.max(0, avgRetreat - 1)
@@ -105,6 +117,13 @@ function scoreSpeed(cards) {
     - 5  * s1,
     0, 100
   );
+
+  const trainers = trainerCards(cards);
+  const speedBonus =
+    Math.min(trainers.filter(c => isItem(c.name) && getTrainerEffect(c.name) === 'speed').length * 8, 16) +
+    Math.min(trainers.filter(c => isItem(c.name) && getTrainerEffect(c.name) === 'search').length * 4, 12) +
+    Math.min(trainers.filter(c => isSupporter(c.name) && getTrainerEffect(c.name) === 'energy').length * 6, 12);
+  return Math.min(existingScore + speedBonus, 100);
 }
 
 /**
@@ -119,11 +138,13 @@ function scoreSpeed(cards) {
  *   scale matches PTCGP's realistic high-end (130-damage Giratina ex → capped at
  *   100, 70-damage Mimikyu ex → 87.5).
  *
+ * Trainer bonus: damage Tools, damage Supporters, damage Items all lift output.
  * null/variable damage attacks are treated as 0.
- * @param {Array} cards
+ * @param {Array}  cards
+ * @param {Object} CARD_REGISTRY
  * @returns {number}
  */
-function scoreDamage(cards) {
+function scoreDamage(cards, CARD_REGISTRY) {
   const poke = pokemon(cards);
   // Per unique Pokémon: find its highest-damage attack
   const maxPerPoke = dedup(poke).map(c => {
@@ -134,20 +155,37 @@ function scoreDamage(cards) {
   // Top-2 values (or all if fewer than 2)
   const top2 = maxPerPoke.sort((a, b) => b - a).slice(0, 2);
   const avg  = top2.reduce((s, v) => s + v, 0) / top2.length;
-  return clamp((avg / 80) * 100, 0, 100);
+  const existingScore = clamp((avg / 80) * 100, 0, 100);
+
+  const trainers = trainerCards(cards);
+  const damageBonus =
+    Math.min(trainers.filter(c => isTool(c.name) && getTrainerEffect(c.name) === 'damage').length * 8, 16) +
+    Math.min(trainers.filter(c => isSupporter(c.name) && getTrainerEffect(c.name) === 'damage').length * 6, 12) +
+    Math.min(trainers.filter(c => isItem(c.name) && getTrainerEffect(c.name) === 'damage').length * 5, 10);
+  return Math.min(existingScore + damageBonus, 100);
 }
 
 /**
  * Survivability score (0–100): average HP and retreat ease across Pokémon.
- * @param {Array} cards
+ * Trainer bonus: survivability Tools, heal Items/Supporters/Tools all raise bulk.
+ * @param {Array}  cards
+ * @param {Object} CARD_REGISTRY
  * @returns {number}
  */
-function scoreSurvivability(cards) {
+function scoreSurvivability(cards, CARD_REGISTRY) {
   const poke = pokemon(cards);
   if (!poke.length) return 0;
   const avgHp      = poke.reduce((s, c) => s + (c.hp          ?? 0), 0) / poke.length;
   const avgRetreat = poke.reduce((s, c) => s + (c.retreatCost ?? 0), 0) / poke.length;
-  return clamp(((avgHp - 60) / 120) * 70 + 30 - 3 * avgRetreat, 0, 100);
+  const existingScore = clamp(((avgHp - 60) / 120) * 70 + 30 - 3 * avgRetreat, 0, 100);
+
+  const trainers = trainerCards(cards);
+  const survBonus =
+    Math.min(trainers.filter(c => isTool(c.name) && getTrainerEffect(c.name) === 'survivability').length * 10, 20) +
+    Math.min(trainers.filter(c => isItem(c.name) && getTrainerEffect(c.name) === 'heal').length * 5, 15) +
+    Math.min(trainers.filter(c => isSupporter(c.name) && getTrainerEffect(c.name) === 'heal').length * 8, 16) +
+    Math.min(trainers.filter(c => isTool(c.name) && getTrainerEffect(c.name) === 'heal').length * 6, 12);
+  return Math.min(existingScore + survBonus, 100);
 }
 
 /**
@@ -155,10 +193,12 @@ function scoreSurvivability(cards) {
  * Deviation from spec: applies a basicPct scale factor as base (per the
  * "60%+ Basic = full 100" rule), which differentiates decks more than a
  * flat 100 - 20×Stage2Lines formula where all meta decks have one Stage 2 line.
- * @param {Array} cards
+ * Trainer bonus: Supporters improve draw/search reliability; search/draw Items reduce bricks.
+ * @param {Array}  cards
+ * @param {Object} CARD_REGISTRY
  * @returns {number}
  */
-function scoreConsistency(cards) {
+function scoreConsistency(cards, CARD_REGISTRY) {
   const poke = pokemon(cards);
   if (!poke.length) return 0;
 
@@ -172,7 +212,15 @@ function scoreConsistency(cards) {
 
   let score = base - 20 * s2Lines;
   if (basics < 2) score -= 40;
-  return clamp(score, 0, 100);
+  const existingScore = clamp(score, 0, 100);
+
+  const trainers = trainerCards(cards);
+  const supporters = trainers.filter(c => isSupporter(c.name));
+  const consistBonus =
+    (supporters.length >= 2 ? 15 : supporters.length === 1 ? 7 : 0) +
+    Math.min(trainers.filter(c => isItem(c.name) && getTrainerEffect(c.name) === 'search').length * 5, 15) +
+    Math.min(trainers.filter(c => isItem(c.name) && getTrainerEffect(c.name) === 'draw').length * 5, 10);
+  return Math.min(existingScore + consistBonus, 100);
 }
 
 /**
@@ -180,10 +228,12 @@ function scoreConsistency(cards) {
  * Deviation from spec: excludes self-harm/own-resource patterns (e.g.
  * "Discard all Energy from this Pokémon" or "your discard pile") so that
  * drawback effects don't inflate the disruption rating.
- * @param {Array} cards
+ * Trainer bonus: disruption Supporters/Items and Stadiums add further pressure.
+ * @param {Array}  cards
+ * @param {Object} CARD_REGISTRY
  * @returns {number}
  */
-function scoreDisruption(cards) {
+function scoreDisruption(cards, CARD_REGISTRY) {
   let score = 0;
   for (const c of dedup(cards)) {
     const texts = [
@@ -196,13 +246,63 @@ function scoreDisruption(cards) {
       score += 15;
     }
   }
-  return clamp(score, 0, 100);
+  const existingScore = clamp(score, 0, 100);
+
+  const trainers = trainerCards(cards);
+  const disruptBonus =
+    Math.min(trainers.filter(c => isSupporter(c.name) && getTrainerEffect(c.name) === 'disruption').length * 15, 30) +
+    Math.min(trainers.filter(c => isItem(c.name) && getTrainerEffect(c.name) === 'disruption').length * 10, 20) +
+    Math.min(trainers.filter(c => isStadium(c.name)).length * 8, 8);
+  return Math.min(existingScore + disruptBonus, 100);
 }
 
-// ─── Public export ────────────────────────────────────────────────────────────
+/**
+ * Trainer synergy score (0–100): how well the trainer package matches
+ * the deck's primary Pokémon type.
+ * Universal trainers (forType=null) always count as compatible.
+ * Type-specific trainers in a matching deck earn an extra bonus.
+ * @param {Array}  cards   Pre-resolved card objects
+ * @param {Object} CARD_REGISTRY
+ * @returns {number}
+ */
+function scoreTrainerSynergy(cards, CARD_REGISTRY) {
+  const pokemonCards = pokemon(cards);
+  if (!pokemonCards.length) return 50;
+
+  const typeCounts = {};
+  pokemonCards.forEach(c => {
+    typeCounts[c.type] = (typeCounts[c.type] || 0) + 1;
+  });
+  const primaryType = Object.entries(typeCounts).sort((a, b) => b[1] - a[1])[0][0];
+
+  const trainers = trainerCards(cards);
+  if (!trainers.length) return 40;
+
+  let compatibleCount = 0;
+  let typeSpecificBonus = 0;
+
+  trainers.forEach(c => {
+    if (isTypeCompatible(c.name, primaryType)) compatibleCount++;
+    const forType = getTrainerForType(c.name);
+    if (forType !== null && forType === primaryType) typeSpecificBonus += 8;
+  });
+
+  const compatibilityRate = compatibleCount / trainers.length;
+  const base  = compatibilityRate * 70;                   // max 70 from compatibility
+  const bonus = Math.min(typeSpecificBonus, 30);          // max 30 from type-specific cards
+  return Math.min(Math.round(base + bonus), 100);
+}
+
+// ─── Public exports ────────────────────────────────────────────────────────────
+
+/** Return a copy of the current weight map. */
+export function getWeights() { return { ...WEIGHTS }; }
+
+/** Merge w into WEIGHTS (use for deck-builder strategy overrides in Phase A). */
+export function setWeights(w) { Object.assign(WEIGHTS, w); }
 
 /**
- * Score a deck across five dimensions, returning a weighted total, tier, and breakdown.
+ * Score a deck across six dimensions, returning a weighted total, tier, and breakdown.
  *
  * @param {string[]} deckCardIds - Flat array of card IDs; duplicates represent copies.
  * @param {Object.<string, {
@@ -215,25 +315,30 @@ function scoreDisruption(cards) {
  *   attacks:      Array<{name: string, cost?: string[], energyCost?: number, damage: number|null, effect?: string, effectText?: string}>,
  *   abilities:    Array<{name: string, text: string}>
  * }>} CARD_REGISTRY
- * @returns {{ total: number, tier: "S"|"A"|"B"|"C", breakdown: { speed: number, damage: number, survivability: number, consistency: number, disruption: number } }}
+ * @returns {{ total: number, tier: "S"|"A"|"B"|"C", breakdown: {
+ *   speed: number, damage: number, survivability: number,
+ *   consistency: number, disruption: number, trainerSynergy: number
+ * }}}
  */
 export function scoreDeck(deckCardIds, CARD_REGISTRY) {
   const cards = resolve(deckCardIds, CARD_REGISTRY);
 
   const breakdown = {
-    speed:          +scoreSpeed(cards).toFixed(1),
-    damage:         +scoreDamage(cards).toFixed(1),
-    survivability:  +scoreSurvivability(cards).toFixed(1),
-    consistency:    +scoreConsistency(cards).toFixed(1),
-    disruption:     +scoreDisruption(cards).toFixed(1),
+    speed:          +scoreSpeed(cards, CARD_REGISTRY).toFixed(1),
+    damage:         +scoreDamage(cards, CARD_REGISTRY).toFixed(1),
+    survivability:  +scoreSurvivability(cards, CARD_REGISTRY).toFixed(1),
+    consistency:    +scoreConsistency(cards, CARD_REGISTRY).toFixed(1),
+    disruption:     +scoreDisruption(cards, CARD_REGISTRY).toFixed(1),
+    trainerSynergy: +scoreTrainerSynergy(cards, CARD_REGISTRY).toFixed(1),
   };
 
   const total = Math.round(
-    breakdown.speed         * WEIGHTS.speed         +
-    breakdown.damage        * WEIGHTS.damage        +
-    breakdown.survivability * WEIGHTS.survivability +
-    breakdown.consistency   * WEIGHTS.consistency   +
-    breakdown.disruption    * WEIGHTS.disruption
+    breakdown.speed          * WEIGHTS.speed          +
+    breakdown.damage         * WEIGHTS.damage         +
+    breakdown.survivability  * WEIGHTS.survivability  +
+    breakdown.consistency    * WEIGHTS.consistency    +
+    breakdown.disruption     * WEIGHTS.disruption     +
+    breakdown.trainerSynergy * WEIGHTS.trainerSynergy
   );
 
   const tier = total >= 80 ? 'S' : total >= 65 ? 'A' : total >= 50 ? 'B' : 'C';

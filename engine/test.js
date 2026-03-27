@@ -5,14 +5,17 @@ import { scoreDeck, analyzeDeck, suggestSwaps,
          detectBehavioralBias, getTopEVPicks,
          scoreEvolutionaryStability, simulateMetaShift,
          computeShapley, suggestShapleySwaps,
-         analyzeFormatFit, compareFormatFitAcrossMeta } from './index.js';
+         analyzeFormatFit, compareFormatFitAcrossMeta,
+         classifyCardRole, getEvolutionSpeedModifier, calculateTTK,
+         ARCHETYPES, simulateDeckVariants,
+         buildOptimalDeck, buildMetaOptimalDecks } from './index.js';
 
 const require = createRequire(import.meta.url);
 const detail  = require('../cards-detail.json');
 
-// ─── Stage data for all 44 CARD_REGISTRY entries ──────────────────────────────
-// Source: FULL_CARD_DB.stage extracted from ptcgp-meta-engine.html
-// null = Trainer/Supporter (skipped by all sub-scorers)
+// ─── Stage + name + type for all 44 CARD_REGISTRY entries ────────────────────
+// Source: FULL_CARD_DB extracted from ptcgp-meta-engine.html
+// stage null = Trainer (skipped by Pokémon sub-scorers; filtered by trainerCards)
 const STAGE = {
   'A1-087': 'Basic',   'A1-088': 'Stage 1', 'A1-089': 'Stage 2',
   'A1-220': null,      'A1-223': null,       'A1-225': null,
@@ -33,11 +36,61 @@ const STAGE = {
   'P-A-005': null,     'P-A-006': null,     'P-A-007': null,
 };
 
-// Build enriched registry: stage + cards-detail.json stats
+// name + type for all 44 entries (from FULL_CARD_DB; needed for trainer-data lookups)
+const CARD_META = {
+  'A1-087':  { name: 'Froakie',              type: 'Water'     },
+  'A1-088':  { name: 'Frogadier',            type: 'Water'     },
+  'A1-089':  { name: 'Greninja',             type: 'Water'     },
+  'A1-220':  { name: 'Misty',                type: 'Trainer'   },
+  'A1-223':  { name: 'Giovanni',             type: 'Trainer'   },
+  'A1-225':  { name: 'Sabrina',              type: 'Trainer'   },
+  'A2-109':  { name: 'Darkrai',              type: 'Dark'      },
+  'A2-110':  { name: 'Darkrai ex',           type: 'Dark'      },
+  'A2b-035': { name: 'Giratina ex',          type: 'Psychic'   },
+  'A3-034':  { name: 'Oricorio',             type: 'Fire'      },
+  'A3-074':  { name: 'Shuppet',              type: 'Psychic'   },
+  'A3-075':  { name: 'Banette',              type: 'Psychic'   },
+  'A4a-020': { name: 'Suicune ex',           type: 'Water'     },
+  'B1-102':  { name: 'Mega Altaria ex',      type: 'Psychic'   },
+  'B1-109':  { name: 'Chingling',            type: 'Psychic'   },
+  'B1-150':  { name: 'Absol',                type: 'Dark'      },
+  'B1-151':  { name: 'Mega Absol ex',        type: 'Dark'      },
+  'B1-155':  { name: 'Deino',                type: 'Dark'      },
+  'B1-156':  { name: 'Zweilous',             type: 'Dark'      },
+  'B1-157':  { name: 'Hydreigon',            type: 'Dark'      },
+  'B1-196':  { name: 'Swablu',               type: 'Colorless' },
+  'B1-197':  { name: 'Altaria',              type: 'Colorless' },
+  'B1-225':  { name: 'Copycat',              type: 'Trainer'   },
+  'B1-304':  { name: 'Zeraora',              type: 'Lightning' },
+  'B1a-024': { name: 'Magnemite',            type: 'Lightning' },
+  'B1a-025': { name: 'Magneton',             type: 'Lightning' },
+  'B1a-026': { name: 'Magnezone',            type: 'Lightning' },
+  'B2-067':  { name: 'Litwick',              type: 'Psychic'   },
+  'B2-068':  { name: 'Lampent',              type: 'Psychic'   },
+  'B2-069':  { name: 'Chandelure',           type: 'Psychic'   },
+  'B2-071':  { name: 'Pumpkaboo',            type: 'Psychic'   },
+  'B2-072':  { name: 'Gourgeist',            type: 'Psychic'   },
+  'B2-073':  { name: 'Mimikyu ex',           type: 'Psychic'   },
+  'B2-191':  { name: 'Sightseer',            type: 'Trainer'   },
+  'B2a-001': { name: 'Sprigatito',           type: 'Grass'     },
+  'B2a-002': { name: 'Floragato',            type: 'Grass'     },
+  'B2a-034': { name: 'Frigibax',             type: 'Water'     },
+  'B2a-035': { name: 'Arctibax',             type: 'Water'     },
+  'B2a-036': { name: 'Baxcalibur',           type: 'Water'     },
+  'B2a-041': { name: 'Tadbulb',              type: 'Lightning' },
+  'B2a-042': { name: 'Bellibolt ex',         type: 'Lightning' },
+  'P-A-005': { name: 'Poké Ball',            type: 'Trainer'   },
+  'P-A-006': { name: 'Red Card',             type: 'Trainer'   },
+  'P-A-007': { name: "Professor's Research", type: 'Trainer'   },
+};
+
+// Build enriched registry: stage + name + type + cards-detail.json stats
 const REG = {};
 for (const [id, stage] of Object.entries(STAGE)) {
   const d = detail[id] ?? {};
-  REG[id] = { stage, hp: d.hp ?? null, retreatCost: d.retreatCost ?? 0,
+  const m = CARD_META[id] ?? {};
+  REG[id] = { stage, name: m.name ?? null, type: m.type ?? null,
+               hp: d.hp ?? null, retreatCost: d.retreatCost ?? 0,
                attacks: d.attacks ?? [], abilities: d.abilities ?? [] };
 }
 
@@ -151,9 +204,9 @@ results.sort((a, b) => b.total - a.total);
 // ─── Full table ───────────────────────────────────────────────────────────────
 console.log('\n=== All 20 decks — sorted by score descending ===');
 console.log(
-  'rank  score tier  meta  wr     spd   dmg   sur   con   dis   deck'
+  'rank  score tier  meta  wr     spd   dmg   sur   con   dis   trg   deck'
 );
-console.log('─'.repeat(100));
+console.log('─'.repeat(108));
 results.forEach((r, i) => {
   const b = r.breakdown;
   console.log(
@@ -161,7 +214,7 @@ results.forEach((r, i) => {
     `${r.metaTier.padEnd(5)} ${String(r.winRate).padEnd(6)} ` +
     `${String(b.speed).padEnd(5)} ${String(b.damage).padEnd(5)} ` +
     `${String(b.survivability).padEnd(5)} ${String(b.consistency).padEnd(5)} ` +
-    `${String(b.disruption).padEnd(5)} ${r.id}`
+    `${String(b.disruption).padEnd(5)} ${String(b.trainerSynergy).padEnd(5)} ${r.id}`
   );
 });
 
@@ -564,6 +617,105 @@ if (!allFsOK) {
 const allPresent = formatRanking.length === META_SNAPSHOT.length;
 console.log(`7. All ${META_SNAPSHOT.length} decks present → ${allPresent ? 'PASS ✓' : 'FAIL ✗'} (got ${formatRanking.length})`);
 
+// ─── Phase A validation: deck-builder ────────────────────────────────────────
+console.log('\n=== Phase A validation: deck-builder ===');
+
+// ── A1: classifyCardRole ─────────────────────────────────────────────────────
+console.log('\nA1. classifyCardRole:');
+const roleFinisher = classifyCardRole(REG['B2-073']) === 'FINISHER';  // Mimikyu ex 70 dmg
+const roleSniper   = classifyCardRole(REG['A4a-020']) === 'SNIPER';   // Suicune ex bench effect
+const roleAttacker = classifyCardRole(REG['A1-089']) === 'ATTACKER';  // Greninja 60 dmg
+const roleSupport  = classifyCardRole(REG['A1-087']) === 'SUPPORT';   // Froakie 10 dmg
+const roleTrainer  = classifyCardRole(REG['A1-220']) === 'SUPPORT';   // Misty (Trainer)
+
+console.log(`  Mimikyu ex   → ${classifyCardRole(REG['B2-073'])}   target FINISHER → ${roleFinisher ? 'PASS ✓' : 'FAIL ✗'}`);
+console.log(`  Suicune ex   → ${classifyCardRole(REG['A4a-020'])}      target SNIPER   → ${roleSniper   ? 'PASS ✓' : 'FAIL ✗'}`);
+console.log(`  Greninja     → ${classifyCardRole(REG['A1-089'])}   target ATTACKER → ${roleAttacker ? 'PASS ✓' : 'FAIL ✗'}`);
+console.log(`  Froakie      → ${classifyCardRole(REG['A1-087'])}    target SUPPORT  → ${roleSupport  ? 'PASS ✓' : 'FAIL ✗'}`);
+console.log(`  Misty (Trn)  → ${classifyCardRole(REG['A1-220'])}    target SUPPORT  → ${roleTrainer  ? 'PASS ✓' : 'FAIL ✗'}`);
+
+// ── A2: getEvolutionSpeedModifier ────────────────────────────────────────────
+console.log('\nA2. getEvolutionSpeedModifier:');
+const basicOnly  = [REG['B2-073'], REG['A1-087']];                  // both Basic
+const withStage1 = [REG['A1-087'], REG['A1-088']];                  // Basic + Stage 1
+const withStage2 = [REG['A1-087'], REG['A1-088'], REG['A1-089']];   // + Stage 2
+
+const evoMod0 = getEvolutionSpeedModifier(basicOnly,  REG).modifier === 0;
+const evoMod1 = getEvolutionSpeedModifier(withStage1, REG).modifier === 1;
+const evoMod2 = getEvolutionSpeedModifier(withStage2, REG).modifier === 2;
+
+console.log(`  Basic-only  modifier=${getEvolutionSpeedModifier(basicOnly,  REG).modifier}  target 0 → ${evoMod0 ? 'PASS ✓' : 'FAIL ✗'}`);
+console.log(`  +Stage 1    modifier=${getEvolutionSpeedModifier(withStage1, REG).modifier}  target 1 → ${evoMod1 ? 'PASS ✓' : 'FAIL ✗'}`);
+console.log(`  +Stage 2    modifier=${getEvolutionSpeedModifier(withStage2, REG).modifier}  target 2 → ${evoMod2 ? 'PASS ✓' : 'FAIL ✗'}`);
+
+// ── A3: calculateTTK ─────────────────────────────────────────────────────────
+console.log('\nA3. calculateTTK (mimikyu-ex-greninja deck):');
+const mimikyuTTKResult = calculateTTK(mimikyuDeck.cards, REG);
+console.log(`  mainAttacker:    ${mimikyuTTKResult.mainAttacker}`);
+console.log(`  effectiveDamage: ${mimikyuTTKResult.effectiveDamage}`);
+console.log(`  ttk:             ${mimikyuTTKResult.ttk}  (target ≤ 8)`);
+console.log(`  ttkGrade:        ${mimikyuTTKResult.ttkGrade}`);
+console.log(`  evoModReason:    ${mimikyuTTKResult.evoModReason}`);
+
+const ttkPositive   = mimikyuTTKResult.ttk > 0;
+const ttkReasonable = mimikyuTTKResult.ttk <= 8;
+const ttkGradeOK    = ['S','A','B','C'].includes(mimikyuTTKResult.ttkGrade);
+
+console.log(`  ttk > 0     → ${ttkPositive   ? 'PASS ✓' : 'FAIL ✗'}`);
+console.log(`  ttk ≤ 8     → ${ttkReasonable ? 'PASS ✓' : 'FAIL ✗'}`);
+console.log(`  ttkGrade valid  → ${ttkGradeOK    ? 'PASS ✓' : 'FAIL ✗'}`);
+
+// ── A4: buildOptimalDeck per strategy ────────────────────────────────────────
+console.log('\nA4. buildOptimalDeck:');
+
+console.time('buildOptimalDeck AGGRO');
+const aggroBuild = buildOptimalDeck(REG, { archetype: 'AGGRO' });
+console.timeEnd('buildOptimalDeck AGGRO');
+console.log(`  AGGRO  cards=${aggroBuild.deck.length}  score=${aggroBuild.score}  ttk=${aggroBuild.ttk}  grade=${aggroBuild.ttkGrade}`);
+if (aggroBuild.buildLog.length) console.log('  buildLog:', aggroBuild.buildLog.join(' | '));
+
+console.time('buildOptimalDeck TANK');
+const tankBuild  = buildOptimalDeck(REG, { archetype: 'TANK' });
+console.timeEnd('buildOptimalDeck TANK');
+console.log(`  TANK   cards=${tankBuild.deck.length}  score=${tankBuild.score}  ttk=${tankBuild.ttk}  grade=${tankBuild.ttkGrade}`);
+
+console.time('buildOptimalDeck BALANCED');
+const balancedBuild = buildOptimalDeck(REG, { archetype: 'BALANCED' });
+console.timeEnd('buildOptimalDeck BALANCED');
+console.log(`  BALANCED cards=${balancedBuild.deck.length}  score=${balancedBuild.score}  ttk=${balancedBuild.ttk}  grade=${balancedBuild.ttkGrade}`);
+
+const aggroOK    = aggroBuild.deck.length  >= 4 && aggroBuild.score  >= 40;
+const tankOK     = tankBuild.deck.length   >= 4 && tankBuild.score   >= 40;
+const balancedOK = balancedBuild.deck.length >= 4 && balancedBuild.score >= 40;
+
+console.log(`  AGGRO  deck≥4 && score≥40  → ${aggroOK    ? 'PASS ✓' : 'FAIL ✗'}`);
+console.log(`  TANK   deck≥4 && score≥40  → ${tankOK     ? 'PASS ✓' : 'FAIL ✗'}`);
+console.log(`  BALANCED deck≥4 && score≥40 → ${balancedOK ? 'PASS ✓' : 'FAIL ✗'}`);
+
+// AGGRO should achieve lower TTK than TANK (speed vs. bulk)
+const aggroFasterThanTank = aggroBuild.ttk <= tankBuild.ttk;
+console.log(`  AGGRO ttk (${aggroBuild.ttk}) ≤ TANK ttk (${tankBuild.ttk}) → ${aggroFasterThanTank ? 'PASS ✓' : 'FAIL ✗'}`);
+
+// ── A5: buildMetaOptimalDecks ─────────────────────────────────────────────────
+console.log('\nA5. buildMetaOptimalDecks (AGGRO + BALANCED):');
+console.time('buildMetaOptimalDecks');
+const metaBuilt = buildMetaOptimalDecks(REG, META_SNAPSHOT, REG, ['AGGRO', 'BALANCED']);
+console.timeEnd('buildMetaOptimalDecks');
+
+console.log('   rank  strategy   score  ttk  metaWinRate  metaGrade');
+console.log('   ' + '─'.repeat(52));
+metaBuilt.forEach((d, i) => {
+  console.log(`   #${i+1}    ${d.strategy.padEnd(9)} ${String(d.score).padEnd(6)} ${String(d.ttk).padEnd(4)} ${String(d.metaWinRate).padEnd(12)} ${d.metaGrade}`);
+});
+
+const metaLengthOK = metaBuilt.length === 2;
+const metaSorted   = metaBuilt.length < 2 || metaBuilt[0].metaWinRate >= metaBuilt[1].metaWinRate;
+const metaRatesOK  = metaBuilt.every(d => d.metaWinRate > 0);
+
+console.log(`  length === 2          → ${metaLengthOK ? 'PASS ✓' : 'FAIL ✗'}`);
+console.log(`  sorted by metaWinRate → ${metaSorted   ? 'PASS ✓' : 'FAIL ✗'}`);
+console.log(`  all metaWinRate > 0   → ${metaRatesOK  ? 'PASS ✓' : 'FAIL ✗'}`);
+
 // ─── Final all-phases check ───────────────────────────────────────────────────
 console.log('\n=== Final all-phases check ===');
 const allPass = [
@@ -576,6 +728,12 @@ const allPass = [
   essInRange, riskOK, counterOK, shiftRangeOK,      // Phase 7
   mvOK, wlOK, rolesOK, deterministicOK,             // Phase 8
   fsInRange, handOK, ppeOK, allFsOK, allPresent,    // Phase 9
+  // Phase A: deck-builder
+  roleFinisher, roleSniper, roleAttacker, roleSupport, roleTrainer, // A1
+  evoMod0, evoMod1, evoMod2,                                        // A2
+  ttkPositive, ttkReasonable, ttkGradeOK,                           // A3
+  aggroOK, tankOK, balancedOK, aggroFasterThanTank,                 // A4
+  metaLengthOK, metaSorted, metaRatesOK,                            // A5
 ];
 const passed = allPass.filter(Boolean).length;
 console.log(`${passed}/${allPass.length} checks passed ${passed === allPass.length ? '✓ ALL PASS' : '✗ SOME FAILED'}`);

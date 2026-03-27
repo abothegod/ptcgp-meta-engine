@@ -2,11 +2,12 @@ import { scoreDeck } from './scoring.js';
 
 // ─── Tunable thresholds ───────────────────────────────────────────────────────
 const THRESHOLDS = {
-  speed:         { warn: 45, critical: 30 },
-  damage:        { warn: 50, critical: 35 },
-  survivability: { warn: 45, critical: 30 },
-  consistency:   { warn: 50, critical: 35 },
-  disruption:    { warn: 30, critical: 0 },
+  speed:          { warn: 45, critical: 30 },
+  damage:         { warn: 50, critical: 35 },
+  survivability:  { warn: 45, critical: 30 },
+  consistency:    { warn: 50, critical: 35 },
+  disruption:     { warn: 30, critical: 0  },
+  trainerSynergy: { warn: 45, critical: 25 },
 };
 
 /** Energy cost of one attack — handles both {cost:[...]} and {energyCost:n}. */
@@ -94,6 +95,15 @@ export function analyzeDeck(deckCardIds, CARD_REGISTRY) {
     breakdown.disruption,
     `No disruption tools — opponent sets up without interference`,
     `Completely passive — no disruption or status effects`
+  );
+
+  const trainerCompatPct = breakdown.trainerSynergy != null
+    ? Math.round(breakdown.trainerSynergy)
+    : null;
+  check('trainerSynergy',
+    breakdown.trainerSynergy ?? 50,
+    `Trainer cards poorly matched to deck type — ${trainerCompatPct}% compatibility rate`,
+    `Trainer package incompatible with deck strategy — consider type-specific supporters`
   );
 
   let overallSeverity = 0;

@@ -4,6 +4,7 @@ import { detectBehavioralBias, getTopEVPicks }                     from './behav
 import { scoreEvolutionaryStability }                              from './evolutionary-stability.js';
 import { computeShapley }                                          from './shapley-engine.js';
 import { compareFormatFitAcrossMeta }                              from './mechanism-analyzer.js';
+import { buildMetaOptimalDecks }                                   from './deck-builder.js';
 
 // ─── oneLineSummary ───────────────────────────────────────────────────────────
 
@@ -155,9 +156,8 @@ export function analyzeFullMeta(META_SNAPSHOT, ENGINE_REG) {
     };
   }
 
-  console.timeEnd('[Intelligence API] analyzeFullMeta');
-
-  return {
+  // ── Step 8: Autonomous deck builder (all 5 archetypes) ───────────────────
+  const report = {
     generatedAt:   new Date().toISOString(),
     nash:          nashResult,
     behavioral:    biasData,
@@ -165,5 +165,19 @@ export function analyzeFullMeta(META_SNAPSHOT, ENGINE_REG) {
     formatRanking,
     topEVPicks:    getTopEVPicks(biasData, 3),
     perDeck,
+    builtDecks:    [],
   };
+
+  try {
+    report.builtDecks = buildMetaOptimalDecks(
+      ENGINE_REG, META_SNAPSHOT, ENGINE_REG,
+      ['AGGRO', 'CONTROL', 'TANK', 'TRIGGER', 'BALANCED'],
+    );
+  } catch (e) {
+    console.error('[Intelligence API] buildMetaOptimalDecks failed:', e);
+  }
+
+  console.timeEnd('[Intelligence API] analyzeFullMeta');
+
+  return report;
 }

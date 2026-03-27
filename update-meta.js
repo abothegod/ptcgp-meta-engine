@@ -961,6 +961,169 @@ const _LIMITLESS_SYMBOL_MAP = {
   N: 'Dragon', C: 'Colorless',
 };
 
+// ════════════════════════════════════════════════════════════════════════════
+// NEW SET DISCOVERY
+// Fetches pocket.limitlesstcg.com/cards to detect sets released after the
+// hardcoded _LIMITLESS_SETS list was last updated, then ingests all cards
+// from those new sets into the normalised card array.
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Mutable set of known Limitless set codes — updated when new sets are found. */
+const _KNOWN_SET_CODES = new Set(_LIMITLESS_SETS.map(s => s.limitless));
+
+/**
+ * Validate a Limitless set code against PTCGP format patterns.
+ *   Valid expansion : A1  A1a  B2  B2a  (letter + digit + optional lowercase)
+ *   Valid promo     : P-A  P-B
+ */
+function _isValidSetCode(code) {
+  return /^[A-Z][0-9][a-z]?$/.test(code) || /^P-[A-Z]$/.test(code);
+}
+
+/** Convert a Limitless set code to the internal DB set code (P-A → PROMO-A). */
+function _limitlessToDb(limitless) {
+  return limitless.startsWith('P-') ? `PROMO-${limitless.slice(2)}` : limitless;
+}
+
+/**
+ * Fetch the Limitless cards index and return new set entries
+ * ({ limitless, db, name }) that are not yet in _LIMITLESS_SETS.
+ */
+async function discoverNewSets() {
+  try {
+    const res = await fetch('https://pocket.limitlesstcg.com/cards', {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PTCGP-MetaBot/1.0; +https://github.com)' },
+    });
+    if (!res.ok) return [];
+    const html = await res.text();
+
+    const newSets = [];
+    const seen    = new Set();
+
+    // Match anchors like: href="/cards/B2a">Horizon of Dreams</a>
+    // Also handles href="/cards/B2a" with no trailing text (bare links).
+    const linkRe = /href="\/cards\/([A-Za-z][0-9A-Za-z-]*)(?:"|\?|\/)[^>]*>([^<]*)/g;
+    let m;
+    while ((m = linkRe.exec(html)) !== null) {
+      const code = m[1];
+      const name = m[2].trim();
+      if (!_isValidSetCode(code))      continue;
+      if (_KNOWN_SET_CODES.has(code))  continue;
+      if (seen.has(code))              continue;
+      seen.add(code);
+      newSets.push({ limitless: code, db: _limitlessToDb(code), name });
+    }
+
+    return newSets;
+  } catch (e) {
+    log(`  discoverNewSets: ${e.message}`, 'yellow');
+    return [];
+  }
+}
+
+/**
+ * Fetch card-list pages for each new set and return normalised card objects
+ * for cards whose IDs are not already in existingIds.
+ *
+ * Reuses the same HTML parsing approach as fetchLimitlessTypeOverrides():
+ *   td[0] — card number (from href)
+ *   td[1] — card name
+ *   td[2] — rarity abbreviation or SVG (stripped to text)
+ *   td[3] — type symbol + stage text
+ */
+async function ingestNewLimitlessCards(newSets, existingIds) {
+  const ingested = [];
+
+  for (const { limitless, db, name: setDisplayName } of newSets) {
+    const url = `https://pocket.limitlesstcg.com/cards/${limitless}?display=list&show=all`;
+    try {
+      const res = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PTCGP-MetaBot/1.0; +https://github.com)' },
+      });
+      if (!res.ok) {
+        log(`  Ingest ${limitless}: HTTP ${res.status}`, 'yellow');
+        continue;
+      }
+      const html = await res.text();
+
+      // Prefer the display name captured from the index page; fall back to <h1>.
+      let packName = setDisplayName || db;
+      if (!packName || packName === db) {
+        const h1m = html.match(/<h1[^>]*>([^<]+)<\/h1>/);
+        if (h1m) packName = h1m[1].trim();
+      }
+
+      const rowRe = /<tr[^>]*data-hover[^>]*>([\s\S]*?)<\/tr>/gi;
+      let rowMatch;
+      let count = 0;
+
+      while ((rowMatch = rowRe.exec(html)) !== null) {
+        const rowHtml = rowMatch[1];
+
+        const hrefMatch = rowHtml.match(/href="\/cards\/[A-Za-z0-9-]+\/(\d+)"/);
+        if (!hrefMatch) continue;
+
+        const num    = String(parseInt(hrefMatch[1], 10)).padStart(3, '0');
+        const cardId = `${db}-${num}`;
+
+        // Validate set code format — skip anything that doesn't look right
+        if (!_isValidSetCode(limitless)) continue;
+        if (existingIds.has(cardId))     continue;
+
+        // Parse table cells
+        const tds  = [];
+        const tdRe = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+        let tdm;
+        while ((tdm = tdRe.exec(rowHtml)) !== null) tds.push(tdm[1]);
+
+        // td[1] — name
+        const name = tds[1]
+          ? tds[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
+          : cardId;
+
+        // td[2] — rarity (may be an SVG icon or abbreviated text like "C", "R", "EX")
+        const rarityRaw = tds[2]
+          ? tds[2].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
+          : '';
+        const rarity = _normalizeRarity(rarityRaw) || 'C';
+
+        // td[3] — type + stage (identical logic to fetchLimitlessTypeOverrides)
+        const typeCell = tds[3] || '';
+        let type  = 'Colorless';
+        let stage = null;
+        const symMatch = typeCell.match(/class="ptcg-symbol">([A-Z]+)</);
+        if (symMatch) {
+          type = _LIMITLESS_SYMBOL_MAP[symMatch[1]] || 'Colorless';
+          const cellText  = typeCell.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+          const stageWord = cellText.replace(/^[A-Z]+\s*/, '').trim();
+          stage = ['Basic', 'Stage 1', 'Stage 2'].includes(stageWord) ? stageWord : null;
+        } else if (/Supporter|Item|Stadium|Fossil|Tool/i.test(typeCell)) {
+          type = 'Trainer';
+        }
+
+        ingested.push({
+          id: cardId, name, type, pack: packName,
+          setCode: db, number: num, rarity,
+          hp: null, retreatCost: null, attacks: [], abilities: [],
+          stage,
+          deckgymName: name,
+          imageUrl: _buildImageUrl(db, num),
+        });
+        count++;
+      }
+
+      if (count > 0) log(`  Ingested ${count} new card(s) from ${limitless} (${db})`);
+      else           log(`  ${limitless}: no new cards`);
+    } catch (e) {
+      log(`  Ingest ${limitless}: ${e.message}`, 'yellow');
+    }
+
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  return ingested;
+}
+
 /**
  * Fetch type AND stage data from Limitless set list pages.
  * Returns { types: { cardId: type }, stages: { cardId: stage|null } }.
@@ -1416,6 +1579,42 @@ async function fetchCardDatabase() {
     if (a.setCode > b.setCode) return  1;
     return parseInt(a.number, 10) - parseInt(b.number, 10);
   });
+
+  // ── Discover and ingest cards from sets released after the hardcoded list ─
+  // New sets are registered into _LIMITLESS_SETS + _KNOWN_SET_CODES so that
+  // fetchLimitlessTypeOverrides() (called just above) already covered them if
+  // it ran after this block — but because discovery runs here (after the
+  // override pass), the type data for newly ingested cards comes directly from
+  // ingestNewLimitlessCards() which parses the same td[3] cell.
+  try {
+    log('  Checking pocket.limitlesstcg.com for new sets…');
+    const newSets = await discoverNewSets();
+    if (newSets.length > 0) {
+      log(`  Found ${newSets.length} new set(s): ${newSets.map(s => s.limitless).join(', ')}`);
+      // Extend the runtime set list so future calls to fetchLimitlessTypeOverrides
+      // (e.g. a re-run) also cover these sets.
+      for (const s of newSets) {
+        _LIMITLESS_SETS.push(s);
+        _KNOWN_SET_CODES.add(s.limitless);
+      }
+      const existingIds = new Set(normalized.map(c => c.id));
+      const newCards    = await ingestNewLimitlessCards(newSets, existingIds);
+      if (newCards.length > 0) {
+        log(`  ✓ Total new cards ingested: ${newCards.length}`);
+        normalized.push(...newCards);
+        // Re-sort to keep stable ordering after insertion
+        normalized.sort((a, b) => {
+          if (a.setCode < b.setCode) return -1;
+          if (a.setCode > b.setCode) return  1;
+          return parseInt(a.number, 10) - parseInt(b.number, 10);
+        });
+      }
+    } else {
+      log('  No new sets detected');
+    }
+  } catch (e) {
+    log(`  WARN: Set discovery skipped — ${e.message}`, 'yellow');
+  }
 
   log(`  ✓ Normalised ${normalized.length} cards`);
   return normalized;
@@ -2367,10 +2566,141 @@ function log(msg, color) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// PROBE MODE  (node update-meta.js --probe)
+// Non-destructive dry-run that verifies the card-ingestion pipeline
+// without fetching tournament data, running simulations, or writing
+// any files.  Reports:
+//   1. Which set codes pocket.limitlesstcg.com exposes
+//   2. Which of those are new (not in _KNOWN_SET_CODES)
+//   3. How many new cards would be ingested from new sets
+//   4. Cache stats: cached vs. uncached cards-detail entries
+//   5. Integrity check: every ID in FULL_CARD_DB is still present
+// ═══════════════════════════════════════════════════════════════════
+
+async function runProbe() {
+  log('\n╔══════════════════════════════════════════════╗');
+  log('║   PTCGP Meta Engine — PROBE (dry-run)        ║');
+  log('╚══════════════════════════════════════════════╝\n');
+
+  // ── 1. Connect and discover sets ─────────────────────────────────
+  log('► [1] Connecting to pocket.limitlesstcg.com/cards…');
+  let discoveredSets = [];
+  try {
+    const res = await fetch('https://pocket.limitlesstcg.com/cards', {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PTCGP-MetaBot/1.0; +https://github.com)' },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const html = await res.text();
+
+    // Extract all /cards/<setCode> links
+    const linkRe = /href="\/cards\/([A-Za-z][0-9A-Za-z-]*)(?:"|\?|\/)[^>]*>([^<]*)/g;
+    let m;
+    const seen = new Set();
+    while ((m = linkRe.exec(html)) !== null) {
+      const code = m[1];
+      if (!_isValidSetCode(code)) continue;
+      if (seen.has(code)) continue;
+      seen.add(code);
+      discoveredSets.push({ code, name: m[2].trim() });
+    }
+    log(`  Connected ✓  —  found ${discoveredSets.length} set code(s) on the index page`);
+    for (const { code, name } of discoveredSets) {
+      log(`    ${code.padEnd(6)} ${name}`);
+    }
+  } catch (e) {
+    log(`  ERROR: ${e.message}`, 'red');
+    process.exit(1);
+  }
+
+  // ── 2. Flag which codes are new ───────────────────────────────────
+  log('\n► [2] Comparing against known set codes…');
+  const newSets = discoveredSets
+    .filter(({ code }) => !_KNOWN_SET_CODES.has(code))
+    .map(({ code, name }) => ({ limitless: code, db: _limitlessToDb(code), name }));
+
+  if (newSets.length === 0) {
+    log('  All discovered sets are already tracked — no new sets.');
+  } else {
+    for (const { limitless, db } of newSets) {
+      log(`  NEW SET: ${limitless}  (internal DB code: ${db})`);
+    }
+  }
+
+  // ── 3. Ingest card list for new sets ──────────────────────────────
+  log('\n► [3] Fetching card lists for new sets…');
+  if (newSets.length === 0) {
+    log('  Nothing to ingest — skipping.');
+  } else {
+    const existingIds = new Set(Object.keys(KNOWN_CARDS));
+    // Also pull IDs from cards-detail.json for a fuller "already known" baseline
+    const cache = loadCardDetail();
+    for (const id of Object.keys(cache)) existingIds.add(id);
+
+    const newCards = await ingestNewLimitlessCards(newSets, existingIds);
+    if (newCards.length === 0) {
+      log('  No new cards returned (all already cached).');
+    } else {
+      log(`  Would add ${newCards.length} new card(s) to FULL_CARD_DB:`);
+      for (const c of newCards.slice(0, 20)) {
+        log(`    ${c.id.padEnd(12)} ${c.type.padEnd(12)} ${c.rarity.padEnd(4)} ${c.name}`);
+      }
+      if (newCards.length > 20) log(`    … and ${newCards.length - 20} more`);
+    }
+  }
+
+  // ── 4. Cache integrity — detail fetch coverage ───────────────────
+  log('\n► [4] Checking cards-detail.json cache coverage…');
+  const cache = loadCardDetail();
+  const cachedIds  = new Set(Object.keys(cache));
+  const knownNonTrainer = Object.entries(KNOWN_CARDS)
+    .filter(([, c]) => c.type !== 'Trainer')
+    .map(([id]) => id);
+  const needDetail = knownNonTrainer.filter(id => !cachedIds.has(id));
+  log(`  Known non-Trainer cards : ${knownNonTrainer.length}`);
+  log(`  Already in cache        : ${knownNonTrainer.length - needDetail.length}`);
+  log(`  Need detail fetch       : ${needDetail.length}`);
+  if (needDetail.length > 0 && needDetail.length <= 10) {
+    for (const id of needDetail) log(`    missing: ${id}  (${KNOWN_CARDS[id].name})`);
+  }
+
+  // ── 5. FULL_CARD_DB integrity — no existing card was dropped ─────
+  log('\n► [5] Integrity check — comparing FULL_CARD_DB in HTML against KNOWN_CARDS…');
+  try {
+    const html = fs.readFileSync(HTML_FILE, 'utf-8');
+    const dbMatch = html.match(/const FULL_CARD_DB = \[([\s\S]*?)\];/);
+    if (!dbMatch) {
+      log('  WARN: FULL_CARD_DB not found in HTML — skipping integrity check.', 'yellow');
+    } else {
+      const htmlIds = [];
+      const idRe = /"id"\s*:\s*"([^"]+)"/g;
+      let im;
+      while ((im = idRe.exec(dbMatch[1])) !== null) htmlIds.push(im[1]);
+
+      const htmlIdSet = new Set(htmlIds);
+      const knownIds  = Object.keys(KNOWN_CARDS);
+      const missing   = knownIds.filter(id => !htmlIdSet.has(id));
+      log(`  FULL_CARD_DB in HTML : ${htmlIds.length} entries`);
+      log(`  KNOWN_CARDS          : ${knownIds.length} entries`);
+      if (missing.length === 0) {
+        log('  ✓ All KNOWN_CARDS IDs are present in FULL_CARD_DB — nothing dropped.');
+      } else {
+        log(`  WARN: ${missing.length} KNOWN_CARDS ID(s) not in FULL_CARD_DB:`, 'yellow');
+        for (const id of missing) log(`    ${id}  ${KNOWN_CARDS[id].name}`, 'yellow');
+      }
+    }
+  } catch (e) {
+    log(`  WARN: ${e.message}`, 'yellow');
+  }
+
+  log('\n✓ Probe complete — no files were written.\n');
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // ENTRY POINT
 // ═══════════════════════════════════════════════════════════════════
 
-runPipeline().catch(err => {
+const _PROBE = process.argv.includes('--probe');
+(_PROBE ? runProbe() : runPipeline()).catch(err => {
   log(`\nFATAL: ${err.message}`, 'red');
   console.error(err.stack);
   process.exit(1);
